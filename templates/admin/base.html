@@ -1,0 +1,40 @@
+{% extends 'admin/base.html' %}
+
+{% block head_css %}
+{{ super() }}
+<style>
+    .navbar-brand {
+        font-size: 1.5rem;
+        font-weight: bold;
+    }
+    .navbar-nav {
+        margin-left: auto;
+    }
+    .nav-item {
+        margin-left: 1rem;
+    }
+    .content {
+        padding: 20px;
+    }
+    .table {
+        margin-top: 20px;
+    }
+    .btn-primary {
+        background-color: #007bff;
+        border-color: #007bff;
+    }
+    .btn-primary:hover {
+        background-color: #0056b3;
+        border-color: #0056b3;
+    }
+</style>
+{% endblock %}
+
+{% block access_control %}
+{% if current_user.is_authenticated %}
+<div class="navbar-nav">
+    <span class="nav-item nav-link">{{ current_user.username }}</span>
+    <a class="nav-item nav-link" href="{{ url_for('logout') }}">ログアウト</a>
+</div>
+{% endif %}
+{% endblock %} 
