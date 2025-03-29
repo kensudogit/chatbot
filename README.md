@@ -165,3 +165,132 @@ yarn serve
    - ターミナルでバックエンドサーバーの出力を確認
    - エラーメッセージや警告を確認
    - データベースの接続状態を確認
+
+## ライセンス
+MIT License
+
+## 開発環境の詳細
+
+### バックエンド（FastAPI）
+- Python 3.8以上
+- FastAPI
+- SQLAlchemy
+- Pydantic
+- Transformers（Hugging Face）
+- TensorFlow
+- PyTorch
+
+### フロントエンド（Vue.js）
+- Node.js
+- Vue.js 3
+- Vuetify
+- Axios
+- Vue Router
+
+### データベース
+- SQLite（開発環境用）
+- テーブル構造：
+  - users: ユーザー情報
+  - user_profiles: ユーザープロフィール
+  - chats: チャットセッション
+  - messages: メッセージ
+  - chat_tags: チャットタグ
+  - user_activity_logs: ユーザーアクティビティ
+  - system_metrics: システムメトリクス
+  - user_sessions: ユーザーセッション
+
+### 開発ツール
+- Git（バージョン管理）
+- VS Code（推奨エディタ）
+- Chrome DevTools（デバッグ用）
+
+### 環境変数
+```bash
+# バックエンド
+DATABASE_URL=sqlite:///chatbot.db
+SECRET_KEY=your-secret-key
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+# フロントエンド
+VUE_APP_API_URL=http://localhost:8000
+```
+
+### デプロイメント
+1. バックエンドのビルド
+```bash
+cd backend
+pip install -r requirements.txt
+python main.py
+```
+
+2. フロントエンドのビルド
+```bash
+cd frontend
+npm install
+npm run build
+```
+
+3. 本番環境での実行
+```bash
+# バックエンド
+uvicorn main:app --host 0.0.0.0 --port 8000
+
+# フロントエンド（静的ファイルの配信）
+python -m http.server 8081 --directory dist
+```
+
+### テスト
+```bash
+# バックエンドのテスト
+cd backend
+pytest
+
+# フロントエンドのテスト
+cd frontend
+npm run test:unit
+```
+
+### デバッグ
+1. バックエンドのデバッグ
+   - ログレベルをDEBUGに設定
+   - エラーメッセージの詳細表示
+   - データベースクエリのログ出力
+
+2. フロントエンドのデバッグ
+   - Vue DevToolsの使用
+   - ブラウザの開発者ツール
+   - ネットワークタブでのAPI通信確認
+
+### パフォーマンス最適化
+1. バックエンド
+   - キャッシュの活用
+   - データベースインデックスの最適化
+   - 非同期処理の実装
+
+2. フロントエンド
+   - コード分割
+   - 画像の最適化
+   - バンドルサイズの削減
+
+### セキュリティ
+1. 認証・認可
+   - JWTトークンによる認証
+   - ロールベースのアクセス制御
+   - セッション管理
+
+2. データ保護
+   - パスワードのハッシュ化
+   - HTTPS通信
+   - XSS対策
+
+### 監視とログ
+1. システムメトリクス
+   - CPU使用率
+   - メモリ使用量
+   - レスポンスタイム
+
+2. アプリケーションログ
+   - エラーログ
+   - アクセスログ
+   - パフォーマンスログ
