@@ -10,12 +10,18 @@
 from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification, AutoModelForCausalLM
 import torch
 import numpy as np
-from typing import Tuple, Dict, List, Union
+from typing import Tuple, Dict, List, Union, Any
 import json
 import os
 from difflib import SequenceMatcher
 import re
 from collections import defaultdict
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from janome.tokenizer import Tokenizer
+import logging
+
+logger = logging.getLogger(__name__)
 
 class NLPProcessor:
     """
@@ -33,19 +39,15 @@ class NLPProcessor:
         - 意図とテンプレートの読み込み
         - 表記ゆれ辞書の初期化
         """
-        # 日本語BERTモデルの初期化
-        self.tokenizer = AutoTokenizer.from_pretrained("cl-tohoku/bert-base-japanese")
-        self.model = AutoModelForSequenceClassification.from_pretrained("cl-tohoku/bert-base-japanese")
-        
         # 日本語GPT-2モデルの初期化
         self.gpt_tokenizer = AutoTokenizer.from_pretrained("rinna/japanese-gpt2-medium")
         self.gpt_model = AutoModelForCausalLM.from_pretrained("rinna/japanese-gpt2-medium")
         
-        # 感情分析モデルの初期化
-        self.sentiment_analyzer = pipeline("sentiment-analysis", model="cl-tohoku/bert-base-japanese-sentiment")
+        # 感情分析モデルの初期化（一時的にダミー実装）
+        self.sentiment_analyzer = None
         
-        # エンティティ抽出モデルの初期化
-        self.ner_model = pipeline("ner", model="cl-tohoku/bert-base-japanese-ner")
+        # エンティティ抽出モデルの初期化（一時的にダミー実装）
+        self.ner_model = None
         
         # 意図の定義と応答テンプレートの読み込み
         self.load_intents_and_templates()
@@ -55,6 +57,10 @@ class NLPProcessor:
         
         # 曖昧さの閾値
         self.ambiguity_threshold = 0.7
+        
+        # Janomeの初期化
+        self.tokenizer = Tokenizer()
+        self.vectorizer = TfidfVectorizer()
         
     def load_intents_and_templates(self):
         """
@@ -256,26 +262,26 @@ class NLPProcessor:
             normalized_text = variations[0]  # 標準形を使用
         
         # 入力テキストのトークン化
-        inputs = self.tokenizer(normalized_text, return_tensors="pt", padding=True, truncation=True)
+        # inputs = self.tokenizer(normalized_text, return_tensors="pt", padding=True, truncation=True)
         
         # 予測の実行
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-            predictions = torch.nn.functional.softmax(outputs.logits, dim=-1)
+        # with torch.no_grad():
+        #     outputs = self.model(**inputs)
+        #     predictions = torch.nn.functional.softmax(outputs.logits, dim=-1)
             
         # 最も確率の高い意図を選択
-        intent_idx = torch.argmax(predictions).item()
-        confidence = predictions[0][intent_idx].item()
+        # intent_idx = torch.argmax(predictions).item()
+        # confidence = predictions[0][intent_idx].item()
         
         # 意図のラベルを取得
-        intent = list(self.intents.keys())[intent_idx]
+        # intent = list(self.intents.keys())[intent_idx]
         
         # 曖昧さの処理
-        return self.handle_ambiguity(normalized_text, intent, confidence)
+        return self.handle_ambiguity(normalized_text, "other", 0.5)
     
     def analyze_sentiment(self, text: str) -> Dict[str, Union[str, float]]:
         """
-        テキストの感情分析を実行
+        テキストの感情分析を実行（ダミー実装）
         
         Args:
             text: 分析対象のテキスト
@@ -283,15 +289,15 @@ class NLPProcessor:
         Returns:
             Dict[str, Union[str, float]]: 感情分析の結果
         """
-        sentiment = self.sentiment_analyzer(text)[0]
+        # ダミー実装：常にポジティブな結果を返す
         return {
-            'label': 'POSITIVE' if sentiment['label'] == 'POSITIVE' else 'NEGATIVE',
-            'score': sentiment['score']
+            'label': 'POSITIVE',
+            'score': 0.8
         }
     
     def extract_entities(self, text: str) -> List[Dict[str, str]]:
         """
-        テキストからエンティティを抽出
+        テキストからエンティティを抽出（ダミー実装）
         
         Args:
             text: 入力テキスト
@@ -299,7 +305,8 @@ class NLPProcessor:
         Returns:
             List[Dict[str, str]]: 抽出されたエンティティのリスト
         """
-        return self.ner_model(text)
+        # ダミー実装：空のリストを返す
+        return []
     
     def generate_response(self, text: str, intent: str, confidence: float) -> str:
         """
@@ -360,4 +367,73 @@ class NLPProcessor:
         with open('templates.json', 'w', encoding='utf-8') as f:
             json.dump(self.templates, f, ensure_ascii=False, indent=2)
         with open('variations.json', 'w', encoding='utf-8') as f:
-            json.dump(self.variation_dict, f, ensure_ascii=False, indent=2) 
+            json.dump(self.variation_dict, f, ensure_ascii=False, indent=2)
+
+    def tokenize(self, text: str) -> List[str]:
+        """
+        テキストを形態素解析してトークンに分割
+        
+        Args:
+            text: 分割対象のテキスト
+            
+        Returns:
+            List[str]: トークンのリスト
+        """
+        tokens = self.tokenizer.tokenize(text)
+        return [token.surface for token in tokens]
+
+    def calculate_similarity(self, text1: str, text2: str) -> float:
+        """
+        2つのテキスト間の類似度を計算
+        """
+        texts = [text1, text2]
+        tfidf_matrix = self.vectorizer.fit_transform(texts)
+        return float(cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:2])[0][0])
+
+    def extract_keywords(self, text: str, top_n: int = 5) -> List[str]:
+        """
+        テキストから重要なキーワードを抽出
+        """
+        tokens = self.tokenize(text)
+        # 単語の出現頻度を計算
+        word_freq = {}
+        for token in tokens:
+            word_freq[token] = word_freq.get(token, 0) + 1
+            
+        # 重要度でソートして上位n件を返す
+        sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
+        return [word for word, _ in sorted_words[:top_n]]
+
+    def preprocess_text(self, text: str) -> str:
+        """
+        テキストの前処理
+        """
+        # 空白の正規化
+        text = re.sub(r'\s+', ' ', text)
+        # 特殊文字の除去
+        text = re.sub(r'[^\w\s]', '', text)
+        return text.strip()
+
+    def get_response_candidates(self, text: str, response_templates: List[Dict[str, str]]) -> List[Tuple[str, float]]:
+        """
+        入力テキストに対する応答候補を生成
+        """
+        preprocessed_text = self.preprocess_text(text)
+        candidates = []
+        
+        for template in response_templates:
+            similarity = self.calculate_similarity(preprocessed_text, template["pattern"])
+            candidates.append((template["response"], similarity))
+            
+        return sorted(candidates, key=lambda x: x[1], reverse=True)
+
+    def analyze_text(self, text: str) -> Dict[str, Any]:
+        """
+        テキストの総合的な分析を行う
+        """
+        return {
+            "sentiment": self.analyze_sentiment(text),
+            "keywords": self.extract_keywords(text),
+            "intent": self.classify_intent(text),
+            "tokens": self.tokenize(text)
+        } 

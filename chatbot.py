@@ -12,14 +12,14 @@ from flask_login import LoginManager, login_user, logout_user, login_required, c
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from flask_caching import Cache
 from flask_profiler import Profiler
-from flask_admin import Admin
+# from flask_admin import Admin
 from dotenv import load_dotenv
 from models import db, User, ChatHistory, Intent, ResponseTemplate
 from nlp import NLPProcessor
 from celery import Celery
-from monitoring import setup_monitoring, logger, CHAT_REQUESTS, CHAT_LATENCY, NLP_PROCESSING_TIME, ACTIVE_USERS
+# from monitoring import setup_monitoring, logger, CHAT_REQUESTS, CHAT_LATENCY, NLP_PROCESSING_TIME, ACTIVE_USERS
 from utils import track_time, memory_profile, setup_query_logging, track_db_connections, cache_with_metrics
-from admin import UserAdmin, ChatHistoryAdmin, IntentAdmin, ResponseTemplateAdmin
+# from admin import UserAdmin, ChatHistoryAdmin, IntentAdmin, ResponseTemplateAdmin
 import os
 from datetime import timedelta
 import bcrypt
@@ -28,6 +28,10 @@ from functools import wraps
 from sqlalchemy.orm import scoped_session, sessionmaker
 from contextlib import contextmanager
 import sentry_sdk
+import logging
+
+# ロガーの設定
+logger = logging.getLogger(__name__)
 
 # 環境変数の読み込み
 load_dotenv()
@@ -39,44 +43,22 @@ app = Flask(__name__,
 )
 
 # Sentryの初期化（一時的に無効化）
-# sentry_dsn = os.getenv('SENTRY_DSN')
-# if sentry_dsn and sentry_dsn.startswith(('http://', 'https://')):
-#     try:
-#         sentry_sdk.init(
-#             dsn=sentry_dsn,
-#             traces_sample_rate=1.0,
-#             profiles_sample_rate=1.0,
-#             environment=os.getenv('FLASK_ENV', 'development')
-#         )
-#         print("Sentry initialized successfully")
-#     except Exception as e:
-#         print(f"Warning: Failed to initialize Sentry: {str(e)}")
-# else:
-#     print("Warning: SENTRY_DSN not set or invalid. Error tracking is disabled.")
 print("Sentry initialization disabled for development")
 
 # アプリケーション設定
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///chatbot.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'mysql://chatbot_user:your_password@localhost/chatbot?charset=utf8mb4')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_size': 20,
-    'max_overflow': 10,
-    'pool_recycle': 3600,
-    'pool_pre_ping': True,
-    'pool_timeout': 30
-}
 app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 
-# キャッシュ設定
-app.config['CACHE_TYPE'] = 'redis'
-app.config['CACHE_REDIS_URL'] = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+# キャッシュ設定（一時的に無効化）
+app.config['CACHE_TYPE'] = 'simple'
 app.config['CACHE_DEFAULT_TIMEOUT'] = 300
 
-# Celery設定（非同期タスク処理用）
-app.config['CELERY_BROKER_URL'] = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/1')
-app.config['CELERY_RESULT_BACKEND'] = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/2')
+# Celery設定（一時的に無効化）
+app.config['CELERY_BROKER_URL'] = 'memory://'
+app.config['CELERY_RESULT_BACKEND'] = 'memory://'
 
 # プロファイラー設定
 app.config['flask_profiler'] = {
@@ -94,6 +76,9 @@ app.config['flask_profiler'] = {
 
 # 拡張機能の初期化
 db.init_app(app)
+with app.app_context():
+    db.create_all()
+
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
@@ -103,41 +88,48 @@ jwt = JWTManager(app)
 cache = Cache(app)
 celery = Celery(app.name, broker=app.config['CELERY_BROKER_URL'])
 celery.conf.update(app.config)
-profiler = Profiler(app)
+# profiler = Profiler(app)  # 一時的に無効化
 
-# 管理画面の初期化
-admin = Admin(app, name='チャットボット管理画面', template_mode='bootstrap4', url='/admin', index_view=None, base_template='admin/base.html')
+# 管理画面の初期化（コメントアウト）
+# admin = Admin(app, name='チャットボット管理画面', template_mode='bootstrap4', url='/admin', index_view=None, base_template='admin/base.html')
 
-# モニタリングの初期化
-metrics = setup_monitoring(app)
+# モニタリングの初期化（一時的に無効化）
+# metrics = setup_monitoring(app)
 
 # NLPプロセッサーの初期化
 nlp_processor = NLPProcessor()
 
-# データベースセッション管理
-session_factory = sessionmaker(bind=db.engine)
-Session = scoped_session(session_factory)
+# データベースセッション管理とモニタリングの設定
+session_factory = None
+Session = None
 
-# データベースモニタリングの設定
-setup_query_logging(db.engine)
-track_db_connections(db.engine)
+def init_db_session():
+    global session_factory, Session
+    session_factory = sessionmaker(bind=db.engine)
+    Session = scoped_session(session_factory)
+    # データベースモニタリングの設定（一時的に無効化）
+    # setup_query_logging(db.engine)
+    # track_db_connections(db.engine)
 
-# 管理画面の登録
-admin.add_view(UserAdmin(User, db.session))
-admin.add_view(ChatHistoryAdmin(ChatHistory, db.session))
-admin.add_view(IntentAdmin(Intent, db.session))
-admin.add_view(ResponseTemplateAdmin(ResponseTemplate, db.session))
+with app.app_context():
+    init_db_session()
 
-# 管理画面のルーティングを明示的に設定
-@app.route('/admin')
-@login_required
-def admin_index():
-    """
-    管理画面のインデックスページ
-    """
-    if not current_user.is_admin:
-        return redirect(url_for('index'))
-    return admin.index()
+# 管理画面の登録（コメントアウト）
+# admin.add_view(UserAdmin(User, db.session))
+# admin.add_view(ChatHistoryAdmin(ChatHistory, db.session))
+# admin.add_view(IntentAdmin(Intent, db.session))
+# admin.add_view(ResponseTemplateAdmin(ResponseTemplate, db.session))
+
+# 管理画面のルーティングを明示的に設定（コメントアウト）
+# @app.route('/admin')
+# @login_required
+# def admin_index():
+#     """
+#     管理画面のインデックスページ
+#     """
+#     if not current_user.is_admin:
+#         return redirect(url_for('index'))
+#     return admin.index()
 
 # インデックスページのルーティングを追加
 @app.route('/')
@@ -146,7 +138,7 @@ def index():
     インデックスページ
     """
     if current_user.is_authenticated:
-        return redirect(url_for('admin_index'))
+        return redirect(url_for('chat'))
     return redirect(url_for('login'))
 
 @contextmanager
@@ -183,7 +175,7 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 @app.route('/register', methods=['POST'])
-@track_time(CHAT_LATENCY)
+# @track_time(CHAT_LATENCY)
 def register():
     """
     新規ユーザー登録エンドポイント
@@ -208,11 +200,11 @@ def register():
         )
         
         session.add(new_user)
-        logger.info('user_registered', username=data['username'])
+        logger.info('user_registered', extra={'username': data['username']})
         return jsonify({'message': 'User registered successfully'}), 201
 
 @app.route('/login', methods=['GET', 'POST'])
-@track_time(CHAT_LATENCY)
+# @track_time(CHAT_LATENCY)
 def login():
     """
     ユーザーログインエンドポイント
@@ -238,8 +230,8 @@ def login():
     if user and bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
         login_user(user)
         access_token = create_access_token(identity=user.id)
-        ACTIVE_USERS.inc()
-        logger.info('user_logged_in', username=username)
+        # ACTIVE_USERS.inc()
+        logger.info('user_logged_in', extra={'username': username})
         
         response_data = {
             'status': 'success',
@@ -254,7 +246,7 @@ def login():
         }
         return jsonify(response_data), 200
     
-    logger.warning('login_failed', username=username)
+    logger.warning('login_failed', extra={'username': username})
     return jsonify({'error': 'Invalid credentials'}), 401
 
 @app.route('/logout')
@@ -266,7 +258,7 @@ def logout():
     - アクティブユーザー数の更新
     """
     logout_user()
-    ACTIVE_USERS.dec()
+    # ACTIVE_USERS.dec()
     logger.info('user_logged_out', username=current_user.username if current_user.is_authenticated else 'unknown')
     return jsonify({'message': 'Logged out successfully'}), 200
 
@@ -295,7 +287,7 @@ def process_chat_message(user_id, message, intent, confidence, response):
 @app.route('/chat', methods=['POST'])
 @jwt_required()
 @async_route
-@track_time(CHAT_LATENCY)
+# @track_time(CHAT_LATENCY)
 async def chat():
     """
     チャットメッセージ処理エンドポイント
@@ -303,7 +295,7 @@ async def chat():
     - 非同期処理
     - レイテンシ計測
     """
-    CHAT_REQUESTS.inc()
+    # CHAT_REQUESTS.inc()
     user_id = get_jwt_identity()
     data = request.get_json()
     user_message = data.get('message', '').strip()
@@ -324,9 +316,11 @@ async def chat():
     process_chat_message.delay(user_id, user_message, intent, confidence, response)
     
     logger.info('chat_response_generated',
-                user_id=user_id,
-                intent=intent,
-                confidence=confidence)
+                extra={
+                    'user_id': user_id,
+                    'intent': intent,
+                    'confidence': confidence
+                })
     
     return jsonify({
         'response': response,
@@ -337,7 +331,7 @@ async def chat():
 
 @app.route('/chat/history', methods=['GET'])
 @jwt_required()
-@cache_with_metrics(cache, timeout=60)
+# @cache_with_metrics(cache, timeout=60)
 def get_chat_history():
     """
     チャット履歴取得エンドポイント

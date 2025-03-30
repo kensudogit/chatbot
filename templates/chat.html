@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>チャットボット</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="chat-container">
+        <header>
+            <h1>チャットボット</h1>
+            <div class="user-info">
+                ようこそ、{{ current_user.username }}さん
+                <a href="{{ url_for('logout') }}" class="logout-btn">ログアウト</a>
+            </div>
+        </header>
+
+        <div class="chat-messages" id="chat-messages">
+            {% for message in messages %}
+                <div class="message {% if message.is_bot %}bot{% else %}user{% endif %}">
+                    <div class="message-content">{{ message.content }}</div>
+                    <div class="message-time">{{ message.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</div>
+                </div>
+            {% endfor %}
+        </div>
+
+        <div class="chat-input">
+            <form id="chat-form" method="POST" action="{{ url_for('send_message') }}">
+                <input type="text" id="message" name="message" placeholder="メッセージを入力..." required>
+                <button type="submit">送信</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // チャットメッセージを最下部にスクロール
+        function scrollToBottom() {
+            const chatMessages = document.getElementById('chat-messages');
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // ページ読み込み時にスクロール
+        window.onload = scrollToBottom;
+
+        // フォーム送信時の処理
+        document.getElementById('chat-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const messageInput = document.getElementById('message');
+            const message = messageInput.value;
+
+            if (message.trim()) {
+                fetch("{{ url_for('send_message') }}", {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: 'message=' + encodeURIComponent(message)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // メッセージの追加
+                    const chatMessages = document.getElementById('chat-messages');
+                    
+                    // ユーザーメッセージ
+                    const userDiv = document.createElement('div');
+                    userDiv.className = 'message user';
+                    userDiv.innerHTML = `
+                        <div class="message-content">${message}</div>
+                        <div class="message-time">${new Date().toLocaleString()}</div>
+                    `;
+                    chatMessages.appendChild(userDiv);
+
+                    // ボットの応答
+                    const botDiv = document.createElement('div');
+                    botDiv.className = 'message bot';
+                    botDiv.innerHTML = `
+                        <div class="message-content">${data.response}</div>
+                        <div class="message-time">${new Date().toLocaleString()}</div>
+                    `;
+                    chatMessages.appendChild(botDiv);
+
+                    // スクロール
+                    scrollToBottom();
+                    
+                    // 入力フィールドをクリア
+                    messageInput.value = '';
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('メッセージの送信中にエラーが発生しました。');
+                });
+            }
+        });
+    </script>
+</body>
+</html> 
