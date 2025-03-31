@@ -201,15 +201,33 @@ async def chat(
                 detail="認証に失敗しました。正しい認証情報を入力してください。"
             )
         
+        # メッセージの検証
+        if not request.messages:
+            raise HTTPException(
+                status_code=400,
+                detail="メッセージが空です"
+            )
+        
         # AIモデルによる応答生成
-        response = ai_manager.generate_response(request.messages, user.id)
+        try:
+            response = ai_manager.generate_response(request.messages, user.id)
+        except Exception as e:
+            logger.error(f"AIモデルによる応答生成中にエラーが発生しました: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail="応答の生成中にエラーが発生しました"
+            )
         
         # モバイルデバイスの場合、応答を最適化
         if device_type == "mobile":
             response = response[:500] + ("..." if len(response) > 500 else "")
         
         # 感情分析
-        sentiment = ai_manager.analyze_sentiment(request.messages[-1].content)
+        try:
+            sentiment = ai_manager.analyze_sentiment(request.messages[-1].content)
+        except Exception as e:
+            logger.error(f"感情分析中にエラーが発生しました: {str(e)}")
+            sentiment = {"label": "NEUTRAL", "score": 0.5}  # デフォルト値
         
         # チャット履歴の保存
         try:
@@ -227,7 +245,7 @@ async def chat(
                         chat_id=chat.id,
                         role=msg.role,
                         content=msg.content,
-                        sentiment=str(sentiment)
+                        sentiment=json.dumps(sentiment, ensure_ascii=False)  # JSON文字列に変換
                     )
                     db.add(db_message)
                 db.commit()
@@ -238,7 +256,6 @@ async def chat(
             logger.error(f"チャット履歴の保存中にエラーが発生しました: {str(e)}")
             db.rollback()
             # エラーが発生しても、応答は返す
-            pass
         
         return ChatResponse(
             response=response,
@@ -246,6 +263,8 @@ async def chat(
             device_type=device_type
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"エラーが発生しました: {str(e)}")
         raise HTTPException(
@@ -759,6 +778,53 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+# メッセージ取得エンドポイント
+@api_app.get("/messages/{chat_id}")
+async def get_messages(
+    chat_id: int,
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+):
+    """
+    チャットのメッセージを取得する
+    """
+    try:
+        # ユーザー認証
+        user = db.query(User).filter(User.email == token).first()
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail="認証に失敗しました。正しい認証情報を入力してください。"
+            )
+        
+        # チャットの存在確認と権限チェック
+        chat = db.query(Chat).filter(
+            and_(
+                Chat.id == chat_id,
+                Chat.user_id == user.id
+            )
+        ).first()
+        
+        if not chat:
+            raise HTTPException(
+                status_code=404,
+                detail="チャットが見つかりません"
+            )
+        
+        # メッセージの取得
+        messages = db.query(DBMessage).filter(
+            DBMessage.chat_id == chat_id
+        ).order_by(DBMessage.created_at.asc()).all()
+        
+        return messages
+        
+    except Exception as e:
+        logger.error(f"メッセージ取得中にエラーが発生しました: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="メッセージ取得中にエラーが発生しました"
+        )
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 
