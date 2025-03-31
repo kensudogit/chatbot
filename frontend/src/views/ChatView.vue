@@ -117,9 +117,16 @@ export default {
         }
       } catch (error) {
         console.error('Error loading messages:', error)
-        if (error.response && error.response.status === 401) {
-          // 認証エラーの場合、ログイン画面にリダイレクト
-          this.$router.push('/login')
+        if (error.response) {
+          switch (error.response.status) {
+            case 401:
+              // 認証エラーの場合、ログイン画面にリダイレクト
+              localStorage.removeItem('token')
+              this.$router.push('/login')
+              break
+            default:
+              console.error('Unexpected error:', error.response.data)
+          }
         }
       }
     },
@@ -145,7 +152,9 @@ export default {
         content: this.newMessage
       }
 
+      // メッセージを一時的に表示
       this.messages.push(userMessage)
+      const tempMessage = this.newMessage
       this.newMessage = ''
       this.isLoading = true
 
@@ -164,27 +173,40 @@ export default {
           }
         })
 
-        const botMessage = {
-          role: 'assistant',
-          content: response.data.response
+        if (response.data && response.data.response) {
+          const botMessage = {
+            role: 'assistant',
+            content: response.data.response
+          }
+          this.messages.push(botMessage)
+          await this.$nextTick()
+          this.scrollToBottom()
+        } else {
+          throw new Error('応答データが不正です')
         }
-
-        this.messages.push(botMessage)
-        await this.$nextTick()
-        this.scrollToBottom()
       } catch (error) {
         console.error('Error sending message:', error)
-        // エラーが発生した場合、最後のメッセージを削除
-        this.messages.pop()
-        if (error.response && error.response.status === 401) {
-          // 認証エラーの場合、ログイン画面にリダイレクト
-          this.$router.push('/login')
-        } else if (error.response && error.response.status === 500) {
-          // サーバーエラーの場合、エラーメッセージを表示
-          this.$vuetify.theme.themes.light.error = '#ff5252'
-          this.$vuetify.theme.themes.dark.error = '#ff5252'
-          this.$vuetify.theme.themes.light.primary = '#ff5252'
-          this.$vuetify.theme.themes.dark.primary = '#ff5252'
+        // エラーが発生した場合、ユーザーメッセージを削除
+        this.messages = this.messages.filter(msg => msg.content !== tempMessage)
+        
+        if (error.response) {
+          switch (error.response.status) {
+            case 401:
+              // 認証エラーの場合、ログイン画面にリダイレクト
+              localStorage.removeItem('token')
+              this.$router.push('/login')
+              break
+            case 500:
+              // サーバーエラーの場合、エラーメッセージを表示
+              this.$vuetify.theme.themes.light.error = '#ff5252'
+              this.$vuetify.theme.themes.dark.error = '#ff5252'
+              this.$vuetify.theme.themes.light.primary = '#ff5252'
+              this.$vuetify.theme.themes.dark.primary = '#ff5252'
+              break
+            default:
+              // その他のエラーの場合
+              console.error('Unexpected error:', error.response.data)
+          }
         }
       } finally {
         this.isLoading = false

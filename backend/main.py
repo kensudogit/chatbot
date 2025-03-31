@@ -8,7 +8,7 @@ from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 import uvicorn
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, and_, desc, create_engine
+from sqlalchemy import or_, and_, desc
 import speech_recognition as sr
 from gtts import gTTS
 import os
@@ -19,20 +19,21 @@ import logging
 import jwt
 from jose import JWTError
 
-# データベース設定
-SQLALCHEMY_DATABASE_URL = "sqlite:///chatbot.db"
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    echo=True
-)
-
 from database import (
-    get_db, User, Chat, Message as DBMessage, UserProfile, UserActivityLog,
-    SystemMetrics, ChatTag, verify_password, get_password_hash, create_access_token,
+    Base, engine, SessionLocal, User, Chat, Message, 
+    UserProfile, UserActivityLog, SystemMetrics, ChatTag, 
+    verify_password, get_password_hash, create_access_token,
     ACCESS_TOKEN_EXPIRE_MINUTES, SECRET_KEY, ALGORITHM, UserSession
 )
 from ai_models import AIModelManager
+
+# データベースセッションの取得
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 app = FastAPI(
     title="チャットボットAPI",
@@ -190,6 +191,8 @@ async def chat(
             email = payload.get("sub")
             if email is None:
                 raise HTTPException(status_code=401, detail="認証に失敗しました")
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="トークンの有効期限が切れています")
         except JWTError:
             raise HTTPException(status_code=401, detail="認証に失敗しました")
             
@@ -241,7 +244,7 @@ async def chat(
             
             if not request.is_secret:
                 for msg in request.messages:
-                    db_message = DBMessage(
+                    db_message = Message(
                         chat_id=chat.id,
                         role=msg.role,
                         content=msg.content,
@@ -322,6 +325,49 @@ async def speech_to_text(
             detail="音声処理中にエラーが発生しました。しばらく時間をおいて再度お試しください。"
         )
 
+# データベースの初期化とデフォルトユーザーの作成
+def init_db():
+    try:
+        # データベースのテーブルを作成
+        Base.metadata.create_all(bind=engine)
+        
+        # セッションの作成
+        db = SessionLocal()
+        try:
+            # デフォルト管理者ユーザーの作成
+            admin_user = db.query(User).filter(User.email == "admin@example.com").first()
+            if not admin_user:
+                admin_user = User(
+                    username="admin",
+                    email="admin@example.com",
+                    hashed_password=get_password_hash("admin123"),
+                    is_admin=True,
+                    is_active=True
+                )
+                db.add(admin_user)
+                db.commit()
+                logger.info("デフォルト管理者ユーザーを作成しました")
+                
+                # 管理者プロフィールの作成
+                profile = UserProfile(user_id=admin_user.id)
+                db.add(profile)
+                db.commit()
+                logger.info("管理者プロフィールを作成しました")
+        except Exception as e:
+            logger.error(f"デフォルトユーザー作成中にエラーが発生しました: {str(e)}")
+            db.rollback()
+        finally:
+            db.close()
+            
+    except Exception as e:
+        logger.error(f"データベースの初期化中にエラーが発生しました: {str(e)}")
+        raise
+
+# アプリケーション起動時にデータベースを初期化
+@app.on_event("startup")
+async def startup_event():
+    init_db()
+
 # トークン取得エンドポイント
 @api_app.post("/token", response_model=Token)
 async def login_for_access_token(
@@ -349,13 +395,14 @@ async def login_for_access_token(
             )
         
         # アクセストークンの生成
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
             data={"sub": user.email},
-            expires_delta=ACCESS_TOKEN_EXPIRE_MINUTES
+            expires_delta=access_token_expires
         )
         
         # セッションの作成
-        expires_at = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expires_at = datetime.utcnow() + access_token_expires
         session = UserSession(
             user_id=user.id,
             token=access_token,
@@ -371,6 +418,7 @@ async def login_for_access_token(
         
     except Exception as e:
         logger.error(f"ログイン処理中にエラーが発生しました: {str(e)}")
+        db.rollback()
         raise HTTPException(
             status_code=500,
             detail="ログイン処理中にエラーが発生しました"
@@ -547,10 +595,10 @@ async def search_chats(
     
     # 検索条件の適用
     if search.query:
-        query = query.join(DBMessage).filter(
+        query = query.join(Message).filter(
             or_(
                 Chat.title.ilike(f"%{search.query}%"),
-                DBMessage.content.ilike(f"%{search.query}%")
+                Message.content.ilike(f"%{search.query}%")
             )
         )
     
@@ -581,7 +629,7 @@ async def get_admin_metrics(
         total_users = db.query(User).count()
         active_users = db.query(User).filter(User.is_active == True).count()
         total_chats = db.query(Chat).count()
-        total_messages = db.query(DBMessage).count()
+        total_messages = db.query(Message).count()
         
         # アクティビティログの取得
         recent_activities = []
@@ -780,50 +828,50 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 # メッセージ取得エンドポイント
-@api_app.get("/messages/{chat_id}")
+@api_app.get("/messages")
 async def get_messages(
-    chat_id: int,
     db: Session = Depends(get_db),
     token: str = Depends(oauth2_scheme)
 ):
-    """
-    チャットのメッセージを取得する
-    """
     try:
+        # トークンからユーザー情報を取得
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            email = payload.get("sub")
+            if email is None:
+                raise HTTPException(status_code=401, detail="認証に失敗しました")
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="トークンの有効期限が切れています")
+        except JWTError:
+            raise HTTPException(status_code=401, detail="認証に失敗しました")
+            
         # ユーザー認証
-        user = db.query(User).filter(User.email == token).first()
+        user = db.query(User).filter(User.email == email).first()
         if not user:
             raise HTTPException(
                 status_code=401,
                 detail="認証に失敗しました。正しい認証情報を入力してください。"
             )
         
-        # チャットの存在確認と権限チェック
-        chat = db.query(Chat).filter(
-            and_(
-                Chat.id == chat_id,
-                Chat.user_id == user.id
-            )
-        ).first()
+        # ユーザーのチャット履歴を取得
+        chats = db.query(Chat).filter(Chat.user_id == user.id).order_by(desc(Chat.created_at)).all()
+        messages = []
         
-        if not chat:
-            raise HTTPException(
-                status_code=404,
-                detail="チャットが見つかりません"
-            )
+        for chat in chats:
+            chat_messages = db.query(Message).filter(Message.chat_id == chat.id).order_by(Message.created_at).all()
+            for msg in chat_messages:
+                messages.append({
+                    "role": msg.role,
+                    "content": msg.content,
+                    "sentiment": json.loads(msg.sentiment) if msg.sentiment else None
+                })
         
-        # メッセージの取得
-        messages = db.query(DBMessage).filter(
-            DBMessage.chat_id == chat_id
-        ).order_by(DBMessage.created_at.asc()).all()
-        
-        return messages
-        
+        return {"messages": messages}
     except Exception as e:
         logger.error(f"メッセージ取得中にエラーが発生しました: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail="メッセージ取得中にエラーが発生しました"
+            detail="メッセージの取得中にエラーが発生しました"
         )
 
 if __name__ == "__main__":

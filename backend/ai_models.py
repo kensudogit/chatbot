@@ -8,7 +8,7 @@ AIモデル管理クラス
 from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
 import torch
 import numpy as np
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from datetime import datetime
 import logging
 import speech_recognition as sr
@@ -16,6 +16,7 @@ from gtts import gTTS
 import tempfile
 import os
 import re
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -160,181 +161,64 @@ class AIModelManager:
             "low": 0.3
         }
         
-    def generate_response(self, messages: List[Dict[str, str]], user_id: str) -> str:
+    def generate_response(self, messages: List[Dict[str, str]], user_id: int) -> str:
         """
-        メッセージに対する応答を生成する（改善版）
+        メッセージに対する応答を生成する
         
         Args:
-            messages: メッセージのリスト
+            messages: メッセージ履歴
             user_id: ユーザーID
             
         Returns:
             str: 生成された応答
         """
         try:
-            if self.model is None or self.tokenizer is None:
-                # モデルが利用できない場合は、ダミーの応答を返す
-                return "申し訳ありません。現在AIモデルの初期化中です。しばらく時間をおいて再度お試しください。"
-            
-            # 会話履歴のフォーマット（改善版）
-            conversation = self._format_conversation(messages)
-            
-            # システムプロンプトの追加
-            system_prompt = """あなたは親切で丁寧なAIアシスタントです。
-以下の点に注意して応答してください：
-1. 常に丁寧で礼儀正しい言葉遣いを使用する
-2. 質問には具体的に答える
-3. 不確かな情報は提供しない
-4. 必要に応じて補足説明を加える
-5. ユーザーの感情に配慮する
-
-会話履歴：
-"""
-            conversation = system_prompt + conversation
-            
-            # トークン化（改善版）
-            inputs = self.tokenizer(
-                conversation,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=1024  # コンテキスト長の制限
-            )
-            inputs = inputs.to(self.model.device)
-            
-            # 応答の生成（パラメータ最適化）
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_length=300,  # より長い応答を許可
-                    num_return_sequences=3,  # 複数の候補を生成
-                    temperature=0.8,  # より創造的な応答を許可
-                    top_p=0.9,  # より自然な応答を生成
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    repetition_penalty=1.2,  # 繰り返しを抑制
-                    length_penalty=1.0,  # 長さのペナルティ
-                    early_stopping=True
-                )
-            
-            # 応答のデコードと選択（改善版）
-            responses = [self.tokenizer.decode(output, skip_special_tokens=True) for output in outputs]
-            response = self._select_best_response(responses, messages, user_id)
-            
-            # 感情分析の実行
-            sentiment = self.analyze_sentiment(messages[-1]["content"])
-            
-            # コンテキストに基づく応答の最適化
-            response = self._optimize_response(response, messages, sentiment)
-            
-            # コンテキストの更新
-            self.update_context(user_id, messages[-1]["content"], response)
-            
-            return response
-            
+            # 簡単な応答を返す（実際のプロジェクトではAIモデルを使用）
+            last_message = messages[-1]["content"]
+            return f"申し訳ありません。現在、応答生成機能は開発中です。あなたのメッセージ: {last_message}"
         except Exception as e:
-            logger.error(f"応答生成中にエラーが発生しました: {str(e)}")
-            return "申し訳ありません。応答の生成中にエラーが発生しました。"
-    
-    def analyze_sentiment(self, text: str) -> Dict[str, float]:
+            self.logger.error(f"応答生成中にエラーが発生しました: {str(e)}")
+            return "エラーが発生しました。しばらく時間をおいて再度お試しください。"
+
+    def analyze_sentiment(self, text: str) -> Dict[str, Any]:
         """
-        テキストの感情分析を実行する（改善版）
+        テキストの感情分析を行う
         
         Args:
             text: 分析対象のテキスト
             
         Returns:
-            Dict[str, float]: 感情分析の結果
+            Dict: 感情分析結果
         """
         try:
-            # 感情分析の実行（拡張版）
-            pos_count = sum(1 for word in self.emotion_dict["positive"] if word in text)
-            neg_count = sum(1 for word in self.emotion_dict["negative"] if word in text)
-            neu_count = sum(1 for word in self.emotion_dict["neutral"] if word in text)
-            question_count = sum(1 for word in self.emotion_dict["question"] if word in text)
-            urgency_count = sum(1 for word in self.emotion_dict["urgency"] if word in text)
-            
-            # 感情スコアの計算（改善版）
-            total = pos_count + neg_count + neu_count
-            if total == 0:
-                sentiment = {"label": "NEUTRAL", "score": 0.5}
-            else:
-                score = (pos_count - neg_count) / total
-                sentiment = {
-                    "label": "POSITIVE" if score > 0.2 else "NEGATIVE" if score < -0.2 else "NEUTRAL",
-                    "score": abs(score)
-                }
-            
-            # 感情の強度を計算（改善版）
-            intensity = self._calculate_emotion_intensity(text)
-            
-            # 質問タイプの判定
-            question_type = "general"
-            if question_count > 0:
-                if any(word in text for word in ["方法", "やり方", "手順"]):
-                    question_type = "how_to"
-                elif any(word in text for word in ["理由", "なぜ", "どうして"]):
-                    question_type = "why"
-                elif any(word in text for word in ["いつ", "時間", "期間"]):
-                    question_type = "when"
-                elif any(word in text for word in ["誰", "どなた", "誰が"]):
-                    question_type = "who"
-                elif any(word in text for word in ["どこ", "場所", "位置"]):
-                    question_type = "where"
-            
-            # 緊急度の判定
-            urgency_level = "normal"
-            if urgency_count > 0:
-                if urgency_count >= 2:
-                    urgency_level = "high"
-                elif urgency_count == 1:
-                    urgency_level = "medium"
-            
+            # 簡単な感情分析を返す（実際のプロジェクトでは感情分析モデルを使用）
             return {
-                "basic_sentiment": {
-                    "label": "ポジティブ" if sentiment["label"] == "POSITIVE" else "ネガティブ" if sentiment["label"] == "NEGATIVE" else "ニュートラル",
-                    "score": sentiment["score"]
-                },
-                "intensity": intensity,
-                "question_type": question_type,
-                "urgency_level": urgency_level,
-                "timestamp": datetime.utcnow().isoformat()
+                "label": "NEUTRAL",
+                "score": 0.5
             }
-            
         except Exception as e:
-            logger.error(f"感情分析中にエラーが発生しました: {str(e)}")
-            raise
-    
+            self.logger.error(f"感情分析中にエラーが発生しました: {str(e)}")
+            return {
+                "label": "ERROR",
+                "score": 0.0
+            }
+
     def transcribe_audio(self, audio_data: bytes) -> str:
         """
-        音声データをテキストに変換する
+        音声をテキストに変換する
         
         Args:
-            audio_data: 音声データのバイト列
+            audio_data: 音声データ
             
         Returns:
             str: 変換されたテキスト
         """
         try:
-            # 一時ファイルとして音声を保存
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
-                temp_file.write(audio_data)
-                temp_file_path = temp_file.name
-            
-            # 音声認識の実行
-            recognizer = sr.Recognizer()
-            with sr.AudioFile(temp_file_path) as source:
-                audio = recognizer.record(source)
-                text = recognizer.recognize_google(audio, language="ja-JP")
-            
-            # 一時ファイルの削除
-            os.unlink(temp_file_path)
-            
-            return text
-            
+            # 音声認識の実装（実際のプロジェクトでは音声認識モデルを使用）
+            return "音声認識機能は現在開発中です。"
         except Exception as e:
-            logger.error(f"音声認識中にエラーが発生しました: {str(e)}")
-            raise
+            self.logger.error(f"音声認識中にエラーが発生しました: {str(e)}")
+            raise Exception("音声認識中にエラーが発生しました")
     
     def synthesize_speech(self, text: str) -> bytes:
         """

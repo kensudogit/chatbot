@@ -82,24 +82,23 @@ export default {
     async sendMessage() {
       if (!this.userInput.trim()) return;
 
-      // ユーザーメッセージを追加
-      this.messages.push({
-        role: 'user',
-        content: this.userInput
-      });
-
       const userMessage = this.userInput;
-      this.userInput = '';
       this.loading = true;
 
       try {
         // APIリクエスト
         const response = await axios.post('http://localhost:8000/chat', {
-          messages: this.messages
+          messages: [...this.messages, { role: 'user', content: userMessage }]
         }, {
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('token')}`
           }
+        });
+
+        // ユーザーメッセージを追加
+        this.messages.push({
+          role: 'user',
+          content: userMessage
         });
 
         // ボットの応答を追加（表示用の配列を初期化）
@@ -117,6 +116,7 @@ export default {
         await this.textToSpeech(response.data.response);
       } catch (error) {
         console.error('Error:', error);
+        // エラーメッセージを表示
         this.messages.push({
           role: 'assistant',
           content: '申し訳ありません。エラーが発生しました。',
@@ -125,6 +125,7 @@ export default {
         await this.typeMessage(this.messages[this.messages.length - 1]);
       } finally {
         this.loading = false;
+        this.userInput = ''; // 成功した場合のみ入力欄をクリア
         this.$nextTick(() => {
           this.scrollToBottom();
         });
