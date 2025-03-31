@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ConfigDict
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta
 import uvicorn
@@ -85,8 +85,7 @@ class MessageBase(BaseModel):
     content: str
 
 class MessageModel(MessageBase):
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class ChatRequest(BaseModel):
     messages: List[MessageModel]
@@ -110,8 +109,7 @@ class UserProfileUpdate(BaseModel):
     avatar_url: Optional[str] = None
     preferences: Optional[Dict] = None
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
 
 class Token(BaseModel):
     access_token: str

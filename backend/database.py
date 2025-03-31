@@ -13,17 +13,26 @@ from jose import JWTError, jwt
 from typing import Optional
 import os
 from dotenv import load_dotenv
+from pydantic import BaseModel, EmailStr, ConfigDict
 
+# 環境変数の読み込み
 load_dotenv()
 
-# データベース設定
-SQLALCHEMY_DATABASE_URL = "sqlite:///chatbot.db"
+# Docker MySQLの接続設定
+SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:root@localhost:3306/chatbot"
+
+# エンジンの作成
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    echo=True
+    pool_pre_ping=True,  # 接続の死活確認
+    pool_recycle=3600,   # 接続の再利用時間（1時間）
+    echo=True           # SQLログの出力
 )
+
+# セッションの作成
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# モデルのベースクラス
 Base = declarative_base()
 
 # パスワードハッシュ化
@@ -34,6 +43,7 @@ SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7日間
 
+# SQLAlchemy Models
 class User(Base):
     """
     ユーザーモデル
@@ -161,9 +171,65 @@ class UserSession(Base):
     last_activity = Column(DateTime, default=datetime.utcnow)
     user = relationship("User", backref="sessions")
 
+# Pydantic Models for API
+class UserBase(BaseModel):
+    username: str
+    email: EmailStr
+    is_active: bool = True
+    is_admin: bool = False
+
+class UserCreate(UserBase):
+    password: str
+
+class User(UserBase):
+    id: int
+    created_at: datetime
+    last_login: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+class UserProfileBase(BaseModel):
+    full_name: Optional[str] = None
+    bio: Optional[str] = None
+    avatar_url: Optional[str] = None
+    preferences: Optional[dict] = None
+
+class UserProfile(UserProfileBase):
+    id: int
+    user_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class ChatBase(BaseModel):
+    title: str
+    is_secret: bool = False
+
+class Chat(ChatBase):
+    id: int
+    user_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+class MessageBase(BaseModel):
+    role: str
+    content: str
+    sentiment: Optional[dict] = None
+
+class Message(MessageBase):
+    id: int
+    chat_id: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
 # データベースの初期化
 Base.metadata.create_all(bind=engine)
 
+# データベースセッションの取得
 def get_db():
     db = SessionLocal()
     try:
