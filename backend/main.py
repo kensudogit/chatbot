@@ -23,7 +23,8 @@ from database import (
     Base, engine, SessionLocal, User, Chat, Message, 
     UserProfile, UserActivityLog, SystemMetrics, ChatTag, 
     verify_password, get_password_hash, create_access_token,
-    ACCESS_TOKEN_EXPIRE_MINUTES, SECRET_KEY, ALGORITHM, UserSession
+    ACCESS_TOKEN_EXPIRE_MINUTES, SECRET_KEY, ALGORITHM, UserSession,
+    init_db
 )
 from ai_models import AIModelManager
 
@@ -325,48 +326,18 @@ async def speech_to_text(
             detail="音声処理中にエラーが発生しました。しばらく時間をおいて再度お試しください。"
         )
 
-# データベースの初期化とデフォルトユーザーの作成
-def init_db():
-    try:
-        # データベースのテーブルを作成
-        Base.metadata.create_all(bind=engine)
-        
-        # セッションの作成
-        db = SessionLocal()
-        try:
-            # デフォルト管理者ユーザーの作成
-            admin_user = db.query(User).filter(User.email == "admin@example.com").first()
-            if not admin_user:
-                admin_user = User(
-                    username="admin",
-                    email="admin@example.com",
-                    hashed_password=get_password_hash("admin123"),
-                    is_admin=True,
-                    is_active=True
-                )
-                db.add(admin_user)
-                db.commit()
-                logger.info("デフォルト管理者ユーザーを作成しました")
-                
-                # 管理者プロフィールの作成
-                profile = UserProfile(user_id=admin_user.id)
-                db.add(profile)
-                db.commit()
-                logger.info("管理者プロフィールを作成しました")
-        except Exception as e:
-            logger.error(f"デフォルトユーザー作成中にエラーが発生しました: {str(e)}")
-            db.rollback()
-        finally:
-            db.close()
-            
-    except Exception as e:
-        logger.error(f"データベースの初期化中にエラーが発生しました: {str(e)}")
-        raise
-
 # アプリケーション起動時にデータベースを初期化
 @app.on_event("startup")
 async def startup_event():
-    init_db()
+    """
+    アプリケーション起動時の初期化処理
+    """
+    try:
+        # データベースの初期化
+        init_db()
+    except Exception as e:
+        print(f"データベース初期化中にエラーが発生しました: {e}")
+        raise
 
 # トークン取得エンドポイント
 @api_app.post("/token", response_model=Token)
@@ -726,44 +697,46 @@ async def text_to_speech(
         raise HTTPException(status_code=500, detail=str(e))
 
 # 初期管理者ユーザー作成
-@api_app.post("/setup/admin")
+@app.post("/api/setup/admin")
 async def create_admin(db: Session = Depends(get_db)):
     """
-    初期管理者ユーザーを作成する
+    管理者ユーザーの作成
+    - システム初期セットアップ用
+    - 既存の管理者ユーザーが存在する場合は作成しない
     """
     try:
         # 既存の管理者ユーザーをチェック
-        admin = db.query(User).filter(User.is_admin == True).first()
-        if admin:
-            raise HTTPException(status_code=400, detail="管理者ユーザーは既に存在します")
+        admin_user = db.query(User).filter(User.email == "admin@example.com").first()
+        if admin_user:
+            return {"message": "管理者ユーザーは既に存在します"}
         
-        # 管理者ユーザーを作成
-        hashed_password = get_password_hash("admin123")
+        # 管理者ユーザーの作成
         admin_user = User(
             username="admin",
             email="admin@example.com",
-            hashed_password=hashed_password,
+            hashed_password=get_password_hash("admin123"),
             is_admin=True,
             is_active=True
         )
-        
         db.add(admin_user)
-        db.commit()
-        db.refresh(admin_user)
+        db.flush()  # ユーザーIDを取得するためにflush
         
-        # 管理者プロフィールを作成
-        profile = UserProfile(user_id=admin_user.id)
+        # 管理者プロフィールの作成
+        profile = UserProfile(
+            user_id=admin_user.id,
+            full_name="Administrator",
+            bio="System Administrator"
+        )
         db.add(profile)
         db.commit()
         
-        return {"message": "管理者ユーザーが正常に作成されました", "user_id": admin_user.id}
-        
+        return {"message": "管理者ユーザーを作成しました"}
     except Exception as e:
         db.rollback()
-        logger.error(f"管理者ユーザーの作成中にエラーが発生しました: {str(e)}")
+        logger.error(f"管理者ユーザー作成中にエラーが発生しました: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail="管理者ユーザーの作成中にエラーが発生しました"
+            detail=f"管理者ユーザーの作成に失敗しました: {str(e)}"
         )
 
 # 管理者ユーザーの存在確認

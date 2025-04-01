@@ -284,4 +284,8 @@ def get_current_user_from_token(token: str, db) -> Optional[User]:
         return None
         
     user = db.query(User).filter(User.email == email).first()
-    return user if user and user.is_active else None 
+    return user if user and user.is_active else None
+
+# データベースの初期化
+def init_db():
+    Base.metadata.create_all(bind=engine) 
