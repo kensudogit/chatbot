@@ -1,3 +1,10 @@
+<!--
+チャットビューコンポーネント
+- チャットインターフェースの表示
+- メッセージの送受信
+- 音声入力/出力機能
+-->
+
 <template>
   <div class="chat-container">
     <v-card class="chat-card" :dark="isDarkMode">

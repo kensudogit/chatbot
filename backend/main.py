@@ -1,3 +1,10 @@
+"""
+チャットボットのバックエンドAPI
+- FastAPIを使用したRESTful API
+- データベースとの連携
+- AIモデルを使用した応答生成
+"""
+
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -30,6 +37,7 @@ from ai_models import AIModelManager
 
 # データベースセッションの取得
 def get_db():
+    """データベースセッションを取得する依存関数"""
     db = SessionLocal()
     try:
         yield db

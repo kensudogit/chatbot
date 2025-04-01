@@ -19,6 +19,7 @@ import re
 import json
 import openai
 
+# ロガーの設定
 logger = logging.getLogger(__name__)
 
 class AIModelManager:
@@ -34,6 +35,7 @@ class AIModelManager:
         AIモデルマネージャーの初期化
         OpenAIのAPIキーを環境変数から取得
         """
+        # OpenAI APIキーの設定
         self.api_key = os.getenv("OPENAI_API_KEY")
         if self.api_key:
             openai.api_key = self.api_key
