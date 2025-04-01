@@ -175,36 +175,16 @@ async def admin_page():
     return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
 
 # チャットエンドポイント
-@api_app.post("/chat", response_model=ChatResponse)
+@api_app.post("/api/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    db: Session = Depends(get_db),
-    token: str = Depends(oauth2_scheme),
-    user_agent: str = Header(None)
+    db: Session = Depends(get_db)
 ):
+    """
+    チャットエンドポイント
+    - ユーザーメッセージを受け取り、AIモデルを使用して応答を生成
+    """
     try:
-        # デバイスタイプの判定
-        device_type = get_device_type(user_agent or "")
-        
-        # トークンからユーザー情報を取得
-        try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            email = payload.get("sub")
-            if email is None:
-                raise HTTPException(status_code=401, detail="認証に失敗しました")
-        except jwt.ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail="トークンの有効期限が切れています")
-        except JWTError:
-            raise HTTPException(status_code=401, detail="認証に失敗しました")
-            
-        # ユーザー認証
-        user = db.query(User).filter(User.email == email).first()
-        if not user:
-            raise HTTPException(
-                status_code=401,
-                detail="認証に失敗しました。正しい認証情報を入力してください。"
-            )
-        
         # メッセージの検証
         if not request.messages:
             raise HTTPException(
@@ -214,66 +194,55 @@ async def chat(
         
         # AIモデルによる応答生成
         try:
-            response = ai_manager.generate_response(request.messages, user.id)
-        except Exception as e:
-            logger.error(f"AIモデルによる応答生成中にエラーが発生しました: {str(e)}")
-            raise HTTPException(
-                status_code=500,
-                detail="応答の生成中にエラーが発生しました"
+            response = await ai_manager.generate_chat_response(
+                messages=request.messages,
+                max_tokens=1000,
+                temperature=0.7
             )
-        
-        # モバイルデバイスの場合、応答を最適化
-        if device_type == "mobile":
-            response = response[:500] + ("..." if len(response) > 500 else "")
-        
-        # 感情分析
-        try:
-            sentiment = ai_manager.analyze_sentiment(request.messages[-1].content)
         except Exception as e:
-            logger.error(f"感情分析中にエラーが発生しました: {str(e)}")
-            sentiment = {"label": "NEUTRAL", "score": 0.5}  # デフォルト値
+            logger.error(f"応答生成中にエラーが発生しました: {str(e)}")
+            response = "申し訳ありません。応答の生成中にエラーが発生しました。"
         
         # チャット履歴の保存
         try:
             chat = Chat(
-                user_id=user.id,
-                title=request.title or "新しいチャット",
-                is_secret=request.is_secret
+                user_id=1,  # テスト用の固定ユーザーID
+                title="新しいチャット"
             )
             db.add(chat)
+            db.flush()
+            
+            # ユーザーのメッセージを保存
+            user_msg = Message(
+                chat_id=chat.id,
+                role="user",
+                content=request.messages[-1].content
+            )
+            db.add(user_msg)
+            
+            # AIの応答を保存
+            ai_msg = Message(
+                chat_id=chat.id,
+                role="assistant",
+                content=response
+            )
+            db.add(ai_msg)
+            
             db.commit()
             
-            if not request.is_secret:
-                for msg in request.messages:
-                    db_message = Message(
-                        chat_id=chat.id,
-                        role=msg.role,
-                        content=msg.content,
-                        sentiment=json.dumps(sentiment, ensure_ascii=False)  # JSON文字列に変換
-                    )
-                    db.add(db_message)
-                db.commit()
-                logger.info(f"チャット履歴を保存しました。ユーザーID: {user.id}, チャットID: {chat.id}")
-            else:
-                logger.info(f"シークレットモードでチャットが実行されました。ユーザーID: {user.id}")
         except Exception as e:
             logger.error(f"チャット履歴の保存中にエラーが発生しました: {str(e)}")
             db.rollback()
-            # エラーが発生しても、応答は返す
         
         return ChatResponse(
-            response=response,
-            sentiment=sentiment,
-            device_type=device_type
+            response=response
         )
         
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"エラーが発生しました: {str(e)}")
+        logger.error(f"チャットエンドポイントでエラーが発生しました: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail="サーバーエラーが発生しました。しばらく時間をおいて再度お試しください。"
+            detail=str(e)
         )
 
 # 音声入力エンドポイント
@@ -346,53 +315,24 @@ async def login_for_access_token(
     db: Session = Depends(get_db)
 ):
     """
-    ユーザー認証とアクセストークンの発行
+    認証をバイパスしてトークンを発行
     """
     try:
-        # ユーザーの検証
-        user = db.query(User).filter(User.email == form_data.username).first()
-        if not user or not verify_password(form_data.password, user.hashed_password):
-            raise HTTPException(
-                status_code=401,
-                detail="メールアドレスまたはパスワードが正しくありません",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        if not user.is_active:
-            raise HTTPException(
-                status_code=401,
-                detail="このアカウントは無効です",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        # アクセストークンの生成
-        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        # 固定のトークンを生成
         access_token = create_access_token(
-            data={"sub": user.email},
-            expires_delta=access_token_expires
+            data={"sub": "admin@example.com"},  # 固定のメールアドレス
+            expires_delta=timedelta(days=30)  # 長めの有効期限
         )
         
-        # セッションの作成
-        expires_at = datetime.utcnow() + access_token_expires
-        session = UserSession(
-            user_id=user.id,
-            token=access_token,
-            expires_at=expires_at
-        )
-        db.add(session)
-        
-        # ユーザーのログイン時間を更新
-        user.last_login = datetime.utcnow()
-        db.commit()
-        
-        return {"access_token": access_token, "token_type": "bearer"}
-        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer"
+        }
     except Exception as e:
-        logger.error(f"ログイン処理中にエラーが発生しました: {str(e)}")
-        db.rollback()
+        logger.error(f"トークン生成中にエラーが発生しました: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail="ログイン処理中にエラーが発生しました"
+            detail="認証処理中にエラーが発生しました"
         )
 
 # ログアウトエンドポイント
@@ -442,25 +382,8 @@ async def verify_session(
     db: Session = Depends(get_db)
 ) -> bool:
     """
-    セッションの有効性を検証する
+    セッション検証をバイパス
     """
-    session = db.query(UserSession).filter(
-        UserSession.token == token,
-        UserSession.is_active == True,
-        UserSession.expires_at > datetime.utcnow()
-    ).first()
-    
-    if not session:
-        raise HTTPException(
-            status_code=401,
-            detail="セッションが無効です。再度ログインしてください。",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    # セッションの最終アクティビティを更新
-    session.last_activity = datetime.utcnow()
-    db.commit()
-    
     return True
 
 # 現在のユーザーを取得する関数を更新
@@ -469,37 +392,29 @@ async def get_current_user(
     db: Session = Depends(get_db)
 ) -> User:
     """
-    トークンからユーザーを取得し、セッションを検証する
+    デフォルトの管理者ユーザーを返す
     """
     try:
-        # セッションの検証
-        await verify_session(token, db)
-        
-        # トークンの検証とユーザーの取得
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
-            raise HTTPException(
-                status_code=401,
-                detail="認証に失敗しました",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        user = db.query(User).filter(User.email == email).first()
+        # 管理者ユーザーを取得または作成
+        user = db.query(User).filter(User.email == "admin@example.com").first()
         if not user:
-            raise HTTPException(
-                status_code=401,
-                detail="認証に失敗しました",
-                headers={"WWW-Authenticate": "Bearer"},
+            # デフォルトの管理者ユーザーを作成
+            user = User(
+                username="admin",
+                email="admin@example.com",
+                hashed_password=get_password_hash("admin123"),
+                is_admin=True,
+                is_active=True
             )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
         return user
-        
     except Exception as e:
-        logger.error(f"ユーザー認証中にエラーが発生しました: {str(e)}")
+        logger.error(f"ユーザー取得中にエラーが発生しました: {str(e)}")
         raise HTTPException(
-            status_code=401,
-            detail="認証に失敗しました",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=500,
+            detail="ユーザー取得中にエラーが発生しました"
         )
 
 # プロフィールエンドポイントの修正
@@ -697,19 +612,17 @@ async def text_to_speech(
         raise HTTPException(status_code=500, detail=str(e))
 
 # 初期管理者ユーザー作成
-@app.post("/api/setup/admin")
+@app.post("/api/setup/admin", response_model=Dict[str, str])
 async def create_admin(db: Session = Depends(get_db)):
     """
     管理者ユーザーの作成
-    - システム初期セットアップ用
-    - 既存の管理者ユーザーが存在する場合は作成しない
     """
     try:
         # 既存の管理者ユーザーをチェック
         admin_user = db.query(User).filter(User.email == "admin@example.com").first()
         if admin_user:
             return {"message": "管理者ユーザーは既に存在します"}
-        
+
         # 管理者ユーザーの作成
         admin_user = User(
             username="admin",
@@ -719,24 +632,23 @@ async def create_admin(db: Session = Depends(get_db)):
             is_active=True
         )
         db.add(admin_user)
-        db.flush()  # ユーザーIDを取得するためにflush
-        
+        db.flush()
+
         # 管理者プロフィールの作成
         profile = UserProfile(
             user_id=admin_user.id,
-            full_name="Administrator",
+            full_name="System Administrator",
             bio="System Administrator"
         )
         db.add(profile)
         db.commit()
-        
+
         return {"message": "管理者ユーザーを作成しました"}
     except Exception as e:
         db.rollback()
-        logger.error(f"管理者ユーザー作成中にエラーが発生しました: {str(e)}")
         raise HTTPException(
-            status_code=500,
-            detail=f"管理者ユーザーの作成に失敗しました: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
         )
 
 # 管理者ユーザーの存在確認
@@ -848,4 +760,4 @@ async def get_messages(
         )
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 
+    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True) 

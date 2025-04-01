@@ -17,6 +17,7 @@ import tempfile
 import os
 import re
 import json
+import openai
 
 logger = logging.getLogger(__name__)
 
@@ -30,30 +31,26 @@ class AIModelManager:
     
     def __init__(self):
         """
-        初期化処理
-        - 日本語言語モデルのロード
-        - トークナイザーの設定
-        - 感情分析モデルの初期化
+        AIモデルマネージャーの初期化
+        OpenAIのAPIキーを環境変数から取得
         """
-        try:
-            # より軽量な日本語言語モデルの初期化
-            model_name = "rinna/japanese-gpt-neox-3.6b"
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
-                torch_dtype=torch.float32
-            )
-            
-            # GPUが利用可能な場合はGPUに移動
-            if torch.cuda.is_available():
-                self.model = self.model.to("cuda")
-            
-            logger.info("AIモデルの初期化が完了しました")
-        except Exception as e:
-            logger.error(f"AIモデルの初期化中にエラーが発生しました: {str(e)}")
-            # エラーが発生しても、ダミーの応答を返せるようにする
-            self.model = None
-            self.tokenizer = None
+        self.api_key = os.getenv("OPENAI_API_KEY")
+        if self.api_key:
+            openai.api_key = self.api_key
+        
+        # より軽量な日本語言語モデルの初期化
+        model_name = "rinna/japanese-gpt-neox-3.6b"
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_name,
+            torch_dtype=torch.float32
+        )
+        
+        # GPUが利用可能な場合はGPUに移動
+        if torch.cuda.is_available():
+            self.model = self.model.to("cuda")
+        
+        logger.info("AIモデルの初期化が完了しました")
         
         # コンテキスト管理用のメモリ
         self.context_memory = {}
@@ -161,24 +158,83 @@ class AIModelManager:
             "low": 0.3
         }
         
-    def generate_response(self, messages: List[Dict[str, str]], user_id: int) -> str:
+    async def generate_chat_response(
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: int = 1000,
+        temperature: float = 0.7
+    ) -> Optional[str]:
         """
-        メッセージに対する応答を生成する
-        
+        ChatGPTを使用してチャット応答を生成する
+
         Args:
-            messages: メッセージ履歴
-            user_id: ユーザーID
-            
+            messages: 会話履歴のリスト
+            max_tokens: 生成する応答の最大トークン数
+            temperature: 応答の多様性を制御するパラメータ（0-1）
+
         Returns:
-            str: 生成された応答
+            生成された応答テキスト
         """
         try:
-            # 簡単な応答を返す（実際のプロジェクトではAIモデルを使用）
-            last_message = messages[-1]["content"]
-            return f"申し訳ありません。現在、応答生成機能は開発中です。あなたのメッセージ: {last_message}"
+            if not self.api_key:
+                logger.warning("OpenAI APIキーが設定されていません")
+                return self._generate_fallback_response(messages[-1]["content"])
+
+            # OpenAIのチャットAPIを呼び出し
+            response = await openai.ChatCompletion.acreate(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "あなたは親切で知識豊富なAIアシスタントです。"},
+                    *messages
+                ],
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=0.9,
+                frequency_penalty=0.0,
+                presence_penalty=0.6
+            )
+
+            return response.choices[0].message.content
+
         except Exception as e:
-            self.logger.error(f"応答生成中にエラーが発生しました: {str(e)}")
-            return "エラーが発生しました。しばらく時間をおいて再度お試しください。"
+            logger.error(f"ChatGPT APIの呼び出し中にエラーが発生しました: {str(e)}")
+            return self._generate_fallback_response(messages[-1]["content"])
+
+    def _generate_fallback_response(self, user_message: str) -> str:
+        """
+        APIが利用できない場合のフォールバック応答を生成
+
+        Args:
+            user_message: ユーザーの最後のメッセージ
+
+        Returns:
+            フォールバック応答テキスト
+        """
+        # 基本的な応答ルール
+        user_message = user_message.lower()
+        
+        if "こんにちは" in user_message:
+            return "こんにちは！何かお手伝いできることはありますか？"
+        elif "ありがとう" in user_message:
+            return "どういたしまして！他に何かお手伝いできることはありますか？"
+        elif "さようなら" in user_message or "バイバイ" in user_message:
+            return "さようなら！また会いましょう！"
+        elif "天気" in user_message:
+            return "申し訳ありません。現在の天気情報は提供できません。"
+        elif "名前" in user_message:
+            return "私はAIアシスタントです。お手伝いさせていただきます。"
+        elif "元気" in user_message:
+            return "はい、元気です！あなたはいかがですか？"
+        elif "?" in user_message or "？" in user_message:
+            return "良い質問ですね。もう少し具体的に教えていただけますか？"
+        else:
+            return "承知しました。他に何かお手伝いできることはありますか？"
+
+    def transcribe_audio(self, audio_data: bytes) -> str:
+        """
+        音声をテキストに変換する（将来の実装のためのプレースホルダー）
+        """
+        return "音声認識はまだ実装されていません。"
 
     def analyze_sentiment(self, text: str) -> Dict[str, Any]:
         """
@@ -203,23 +259,6 @@ class AIModelManager:
                 "score": 0.0
             }
 
-    def transcribe_audio(self, audio_data: bytes) -> str:
-        """
-        音声をテキストに変換する
-        
-        Args:
-            audio_data: 音声データ
-            
-        Returns:
-            str: 変換されたテキスト
-        """
-        try:
-            # 音声認識の実装（実際のプロジェクトでは音声認識モデルを使用）
-            return "音声認識機能は現在開発中です。"
-        except Exception as e:
-            self.logger.error(f"音声認識中にエラーが発生しました: {str(e)}")
-            raise Exception("音声認識中にエラーが発生しました")
-    
     def synthesize_speech(self, text: str) -> bytes:
         """
         テキストを音声に変換する

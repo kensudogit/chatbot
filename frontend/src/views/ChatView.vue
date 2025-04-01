@@ -103,7 +103,7 @@ export default {
         }
 
         // メッセージ取得APIを呼び出し
-        const response = await axios.get('http://localhost:8000/api/messages', {
+        const response = await axios.get('http://localhost:8080/api/messages', {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -145,32 +145,21 @@ export default {
       }
     },
     async sendMessage() {
-      if (!this.newMessage.trim() || this.isLoading) return
+      if (!this.newMessage.trim()) return
 
       const userMessage = {
         role: 'user',
         content: this.newMessage
       }
 
-      // メッセージを一時的に表示
+      // 一時的にメッセージを保存
+      const currentMessage = this.newMessage
       this.messages.push(userMessage)
-      const tempMessage = this.newMessage
       this.newMessage = ''
-      this.isLoading = true
 
       try {
-        const token = localStorage.getItem('token')
-        if (!token) {
-          throw new Error('認証トークンが見つかりません')
-        }
-
-        const response = await axios.post('http://localhost:8000/api/chat', {
-          messages: this.messages,
-          is_secret: this.isSecretMode
-        }, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
+        const response = await axios.post('http://localhost:8080/api/chat', {
+          messages: [userMessage]
         })
 
         if (response.data && response.data.response) {
@@ -179,47 +168,31 @@ export default {
             content: response.data.response
           }
           this.messages.push(botMessage)
-          await this.$nextTick()
-          this.scrollToBottom()
-        } else {
-          throw new Error('応答データが不正です')
         }
       } catch (error) {
-        console.error('Error sending message:', error)
-        // エラーが発生した場合、ユーザーメッセージを削除
-        this.messages = this.messages.filter(msg => msg.content !== tempMessage)
-        
-        if (error.response) {
-          switch (error.response.status) {
-            case 401:
-              // 認証エラーの場合、ログイン画面にリダイレクト
-              localStorage.removeItem('token')
-              this.$router.push('/login')
-              break
-            case 500:
-              // サーバーエラーの場合、エラーメッセージを表示
-              this.$vuetify.theme.themes.light.error = '#ff5252'
-              this.$vuetify.theme.themes.dark.error = '#ff5252'
-              this.$vuetify.theme.themes.light.primary = '#ff5252'
-              this.$vuetify.theme.themes.dark.primary = '#ff5252'
-              break
-            default:
-              // その他のエラーの場合
-              console.error('Unexpected error:', error.response.data)
-          }
-        }
+        console.error('Error:', error)
+        // エラー時は送信したメッセージを削除
+        this.messages = this.messages.filter(msg => msg.content !== currentMessage)
       } finally {
-        this.isLoading = false
+        // メッセージの追加後に必ずスクロールを実行
+        await this.$nextTick()
+        this.scrollToBottom()
       }
     },
     scrollToBottom() {
       const container = this.$refs.messagesContainer
-      container.scrollTop = container.scrollHeight
+      if (container) {
+        // スムーズスクロールを使用
+        container.scrollTo({
+          top: container.scrollHeight,
+          behavior: 'smooth'
+        })
+      }
     },
     async logout() {
       try {
         const token = localStorage.getItem('token')
-        await axios.post('http://localhost:8000/api/logout', {}, {
+        await axios.post('http://localhost:8080/api/logout', {}, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -250,50 +223,101 @@ export default {
 
 .v-card-text {
   flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
+  padding: 0;
+  position: relative;
+  height: calc(100vh - 200px);
+  overflow: hidden;
 }
 
 .messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  margin-bottom: 16px;
+  height: 100%;
+  overflow-y: auto !important;
+  padding: 20px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  background-color: rgba(0, 0, 0, 0.02);
 }
 
 .message {
-  margin-bottom: 16px;
-  max-width: 80%;
-  padding: 8px 16px;
+  margin-bottom: 10px;
+  padding: 15px;
   border-radius: 8px;
-  position: relative;
-  z-index: 1;
+  max-width: 80%;
+  word-break: break-word;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .message.user {
-  margin-left: auto;
-  background-color: #e3f2fd !important;
-  color: #000 !important;
+  align-self: flex-end;
+  background-color: #1976d2;
+  color: white;
 }
 
 .message.assistant {
-  margin-right: auto;
-  background-color: #f5f5f5 !important;
-  color: #000 !important;
+  align-self: flex-start;
+  background-color: #ffffff;
+  color: black;
+  border: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .input-form {
   width: 100%;
-  padding: 8px 16px;
-  position: sticky;
-  bottom: 0;
-  background-color: inherit;
-  z-index: 2;
+  padding: 16px;
+  background-color: transparent;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* ダークモード時のスタイル */
+.v-theme--dark .message.assistant {
+  background-color: #424242;
+  color: white;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+.v-theme--dark .messages {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+/* スクロールバーのスタイル */
+.messages::-webkit-scrollbar {
+  width: 10px;
+}
+
+.messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.messages::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 10px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.messages::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Firefox用のスクロールバースタイル */
+.messages {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+
+/* ダークモード時のスクロールバー */
+.v-theme--dark .messages::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.v-theme--dark .messages::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.v-theme--dark .messages {
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 }
 
 .v-card-title {

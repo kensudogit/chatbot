@@ -42,24 +42,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # SQLAlchemy Models
-class UserProfile(Base):
-    """
-    ユーザープロファイルモデル
-    - ユーザーの追加情報
-    - 設定と環境設定
-    """
-    __tablename__ = "user_profiles"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
-    full_name = Column(String, nullable=True)
-    bio = Column(Text, nullable=True)
-    avatar_url = Column(String, nullable=True)
-    preferences = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    user = relationship("User", back_populates="profile")
-
 class User(Base):
     """
     ユーザーモデル
@@ -76,10 +58,28 @@ class User(Base):
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
-    profile = relationship("UserProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    chats = relationship("Chat", back_populates="user", cascade="all, delete-orphan")
-    activity_logs = relationship("UserActivityLog", back_populates="user", cascade="all, delete-orphan")
-    sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
+    profile = relationship("database.UserProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    chats = relationship("database.Chat", back_populates="user", cascade="all, delete-orphan")
+    activity_logs = relationship("database.UserActivityLog", back_populates="user", cascade="all, delete-orphan")
+    sessions = relationship("database.UserSession", back_populates="user", cascade="all, delete-orphan")
+
+class UserProfile(Base):
+    """
+    ユーザープロファイルモデル
+    - ユーザーの追加情報
+    - 設定と環境設定
+    """
+    __tablename__ = "user_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    full_name = Column(String, nullable=True)
+    bio = Column(Text, nullable=True)
+    avatar_url = Column(String, nullable=True)
+    preferences = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    user = relationship("database.User", back_populates="profile")
 
 class Chat(Base):
     """
