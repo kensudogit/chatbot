@@ -110,7 +110,7 @@ export default {
         }
 
         // メッセージ取得APIを呼び出し
-        const response = await axios.get('http://localhost:8080/api/messages', {
+        const response = await axios.get('http://localhost:8000/messages', {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -165,8 +165,17 @@ export default {
       this.newMessage = ''
 
       try {
-        const response = await axios.post('http://localhost:8080/api/chat', {
+        const token = localStorage.getItem('token')
+        if (!token) {
+          throw new Error('認証トークンが見つかりません')
+        }
+
+        const response = await axios.post('http://localhost:8000/api/chat', {
           messages: [userMessage]
+        }, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
         })
 
         if (response.data && response.data.response) {
@@ -180,6 +189,10 @@ export default {
         console.error('Error:', error)
         // エラー時は送信したメッセージを削除
         this.messages = this.messages.filter(msg => msg.content !== currentMessage)
+        if (error.response && error.response.status === 401) {
+          // 認証エラーの場合、ログイン画面にリダイレクト
+          this.$router.push('/login')
+        }
       } finally {
         // メッセージの追加後に必ずスクロールを実行
         await this.$nextTick()
@@ -199,7 +212,13 @@ export default {
     async logout() {
       try {
         const token = localStorage.getItem('token')
-        await axios.post('http://localhost:8080/api/logout', {}, {
+        if (!token) {
+          localStorage.removeItem('token')
+          this.$router.push('/login')
+          return
+        }
+
+        await axios.post('http://localhost:8000/logout', {}, {
           headers: {
             'Authorization': `Bearer ${token}`
           }
@@ -208,6 +227,9 @@ export default {
         this.$router.push('/login')
       } catch (error) {
         console.error('Logout error:', error)
+        // エラーが発生しても、ローカルストレージをクリアしてログイン画面に遷移
+        localStorage.removeItem('token')
+        this.$router.push('/login')
       }
     }
   }

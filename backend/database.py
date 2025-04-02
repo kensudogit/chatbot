@@ -8,7 +8,7 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Bool
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 from sqlalchemy import create_engine
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from typing import Optional
@@ -42,27 +42,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # SQLAlchemy Models
-class User(Base):
-    """
-    ユーザーモデル
-    - ユーザー情報の管理
-    - 認証情報の保存
-    """
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
-    email = Column(String, unique=True, index=True)
-    hashed_password = Column(String)
-    is_active = Column(Boolean, default=True)
-    is_admin = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_login = Column(DateTime, nullable=True)
-    profile = relationship("database.UserProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    chats = relationship("database.Chat", back_populates="user", cascade="all, delete-orphan")
-    activity_logs = relationship("database.UserActivityLog", back_populates="user", cascade="all, delete-orphan")
-    sessions = relationship("database.UserSession", back_populates="user", cascade="all, delete-orphan")
-
 class UserProfile(Base):
     """
     ユーザープロファイルモデル
@@ -77,9 +56,29 @@ class UserProfile(Base):
     bio = Column(Text, nullable=True)
     avatar_url = Column(String, nullable=True)
     preferences = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    user = relationship("database.User", back_populates="profile")
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+class User(Base):
+    """
+    ユーザーモデル
+    - ユーザー情報の管理
+    - 認証情報の保存
+    """
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, index=True)
+    email = Column(String, unique=True, index=True)
+    hashed_password = Column(String)
+    is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    last_login = Column(DateTime, nullable=True)
+    profile = relationship("UserProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    chats = relationship("Chat", back_populates="user", cascade="all, delete-orphan")
+    activity_logs = relationship("UserActivityLog", back_populates="user", cascade="all, delete-orphan")
+    sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
 
 class Chat(Base):
     """
@@ -93,8 +92,8 @@ class Chat(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     title = Column(String)
     is_secret = Column(Boolean, default=False)  # シークレットモードフラグ
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
     messages = relationship("Message", back_populates="chat", cascade="all, delete-orphan")
     user = relationship("User", back_populates="chats")
     tags = relationship("ChatTag", back_populates="chat", cascade="all, delete-orphan")
@@ -112,7 +111,7 @@ class Message(Base):
     role = Column(String)
     content = Column(Text)
     sentiment = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     chat = relationship("Chat", back_populates="messages")
 
 class ChatTag(Base):
@@ -126,7 +125,7 @@ class ChatTag(Base):
     id = Column(Integer, primary_key=True, index=True)
     chat_id = Column(Integer, ForeignKey("chats.id", ondelete="CASCADE"))
     tag = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     chat = relationship("Chat", back_populates="tags")
 
 class UserActivityLog(Base):
@@ -142,7 +141,7 @@ class UserActivityLog(Base):
     activity_type = Column(String)
     description = Column(Text, nullable=True)
     details = Column(JSON, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     user = relationship("User", back_populates="activity_logs")
 
 class SystemMetrics(Base):
@@ -151,7 +150,7 @@ class SystemMetrics(Base):
     id = Column(Integer, primary_key=True, index=True)
     metric_type = Column(String)
     value = Column(Float)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=lambda: datetime.now(UTC))
 
 class UserSession(Base):
     """
@@ -165,9 +164,9 @@ class UserSession(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
     token = Column(String, unique=True)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     expires_at = Column(DateTime)
-    last_activity = Column(DateTime, default=datetime.utcnow)
+    last_activity = Column(DateTime, default=lambda: datetime.now(UTC))
     user = relationship("User", back_populates="sessions")
 
 # Pydantic Models for API

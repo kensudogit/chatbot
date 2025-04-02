@@ -5,7 +5,7 @@
 - AIモデルを使用した応答生成
 """
 
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, Query, Header
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, Query, Header, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.responses import FileResponse, RedirectResponse
@@ -60,14 +60,27 @@ api_app = FastAPI(title="API")
 app.mount("/api", api_app)
 
 # CORS設定
-app.add_middleware(
+origins = [
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:8081",
+    "http://127.0.0.1:8081"
+]
+
+api_app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 本番環境では適切なオリジンに制限することを推奨
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
-    max_age=600,  # プリフライトリクエストのキャッシュ時間（秒）
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # レスポンスヘッダーの設定
@@ -81,6 +94,12 @@ async def add_security_headers(request, call_next):
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     response.headers["Pragma"] = "no-cache"
     response.headers["Viewport"] = "width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    # フロントエンドのURLを動的に設定
+    origin = request.headers.get("origin")
+    if origin in ["http://localhost:8081", "http://localhost:8080", "http://127.0.0.1:8080", "http://127.0.0.1:8081"]:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     return response
 
 # AIモデルマネージャーの初期化
@@ -186,13 +205,33 @@ async def admin_page():
 @api_app.post("/api/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
 ):
     """
     チャットエンドポイント
     - ユーザーメッセージを受け取り、AIモデルを使用して応答を生成
     """
     try:
+        # トークンからユーザー情報を取得
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            email = payload.get("sub")
+            if email is None:
+                raise HTTPException(status_code=401, detail="認証に失敗しました")
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="トークンの有効期限が切れています")
+        except JWTError:
+            raise HTTPException(status_code=401, detail="認証に失敗しました")
+            
+        # ユーザー認証
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            raise HTTPException(
+                status_code=401,
+                detail="認証に失敗しました。正しい認証情報を入力してください。"
+            )
+
         # メッセージの検証
         if not request.messages:
             raise HTTPException(
@@ -214,8 +253,9 @@ async def chat(
         # チャット履歴の保存
         try:
             chat = Chat(
-                user_id=1,  # テスト用の固定ユーザーID
-                title="新しいチャット"
+                user_id=user.id,
+                title=request.title if request.title else "新しいチャット",
+                is_secret=request.is_secret
             )
             db.add(chat)
             db.flush()
@@ -308,13 +348,13 @@ async def speech_to_text(
 async def startup_event():
     """
     アプリケーション起動時の初期化処理
+    - データベースの初期化
+    - 管理者アカウントの作成
     """
-    try:
-        # データベースの初期化
-        init_db()
-    except Exception as e:
-        print(f"データベース初期化中にエラーが発生しました: {e}")
-        raise
+    # データベースの初期化
+    Base.metadata.create_all(bind=engine)
+    
+    logger.info("アプリケーションの初期化が完了しました")
 
 # トークン取得エンドポイント
 @api_app.post("/token", response_model=Token)
@@ -323,24 +363,58 @@ async def login_for_access_token(
     db: Session = Depends(get_db)
 ):
     """
-    認証をバイパスしてトークンを発行
+    ユーザー認証とアクセストークンの生成
     """
     try:
-        # 固定のトークンを生成
+        # ユーザーの検証
+        user = db.query(User).filter(User.username == form_data.username).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="ユーザー名またはパスワードが正しくありません",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # パスワードの検証
+        if not verify_password(form_data.password, user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="ユーザー名またはパスワードが正しくありません",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # アクセストークンの生成
+        access_token_expires = timedelta(minutes=30)
         access_token = create_access_token(
-            data={"sub": "admin@example.com"},  # 固定のメールアドレス
-            expires_delta=timedelta(days=30)  # 長めの有効期限
+            data={"sub": user.email},
+            expires_delta=access_token_expires
         )
-        
+
+        # 最終ログイン時刻の更新
+        user.last_login = datetime.utcnow()
+        db.commit()
+
+        # アクティビティログの記録
+        activity_log = UserActivityLog(
+            user_id=user.id,
+            activity_type="login",
+            description="ユーザーがログインしました",
+            details={"timestamp": datetime.utcnow().isoformat()}
+        )
+        db.add(activity_log)
+        db.commit()
+
         return {
             "access_token": access_token,
             "token_type": "bearer"
         }
+
     except Exception as e:
-        logger.error(f"トークン生成中にエラーが発生しました: {str(e)}")
+        logger.error(f"ログイン処理中にエラーが発生しました: {str(e)}")
+        db.rollback()
         raise HTTPException(
-            status_code=500,
-            detail="認証処理中にエラーが発生しました"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="ログイン処理中にエラーが発生しました"
         )
 
 # ログアウトエンドポイント
@@ -747,16 +821,19 @@ async def get_messages(
             )
         
         # ユーザーのチャット履歴を取得
-        chats = db.query(Chat).filter(Chat.user_id == user.id).order_by(desc(Chat.created_at)).all()
-        messages = []
+        chats = db.query(Chat).filter(Chat.user_id == user.id).all()
         
+        # メッセージを取得
+        messages = []
         for chat in chats:
-            chat_messages = db.query(Message).filter(Message.chat_id == chat.id).order_by(Message.created_at).all()
+            chat_messages = db.query(Message).filter(Message.chat_id == chat.id).all()
             for msg in chat_messages:
                 messages.append({
+                    "id": msg.id,
                     "role": msg.role,
                     "content": msg.content,
-                    "sentiment": json.loads(msg.sentiment) if msg.sentiment else None
+                    "chat_id": chat.id,
+                    "created_at": msg.created_at.isoformat()
                 })
         
         return {"messages": messages}
@@ -764,8 +841,27 @@ async def get_messages(
         logger.error(f"メッセージ取得中にエラーが発生しました: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail="メッセージの取得中にエラーが発生しました"
+            detail="メッセージ取得中にエラーが発生しました"
         )
 
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True) 
+# フロントエンド互換用のエンドポイント
+@api_app.get("/api/messages")
+async def get_messages_api(
+    db: Session = Depends(get_db),
+    token: str = Depends(oauth2_scheme)
+):
+    return await get_messages(db, token)
+
+if __name__ == '__main__':
+    try:
+        # データベースの初期化
+        Base.metadata.create_all(bind=engine)
+        print("Database initialized successfully")
+        
+        # アプリケーションの起動
+        port = int(os.getenv('PORT', 8000))
+        print(f"Starting application on port {port}")
+        uvicorn.run("main:app", host='0.0.0.0', port=port, reload=True)
+    except Exception as e:
+        print(f"Error during startup: {str(e)}")
+        raise 
