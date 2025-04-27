@@ -18,9 +18,13 @@ import os
 import re
 import json
 import openai
+from numpy.random import default_rng
 
 # ロガーの設定
 logger = logging.getLogger(__name__)
+
+# Define a constant for the string "ありがとう"
+THANK_YOU = "ありがとう"
 
 class AIModelManager:
     """
@@ -37,8 +41,8 @@ class AIModelManager:
         """
         # OpenAI APIキーの設定
         self.api_key = os.getenv("OPENAI_API_KEY")
-        if self.api_key:
-            openai.api_key = self.api_key
+        if not self.api_key:
+            logger.warning("OpenAI APIキーが設定されていません")
         
         # より軽量な日本語言語モデルの初期化
         model_name = "rinna/japanese-gpt-neox-3.6b"
@@ -61,7 +65,7 @@ class AIModelManager:
         self.emotion_dict = {
             "positive": [
                 "嬉しい", "楽しい", "素晴らしい", "良い", "好き",
-                "感謝", "ありがとう", "助かる", "便利", "快適",
+                "感謝", THANK_YOU, "助かる", "便利", "快適",
                 "満足", "期待", "希望", "成功", "達成",
                 "優しい", "親切", "丁寧", "誠実", "信頼"
             ],
@@ -159,7 +163,45 @@ class AIModelManager:
             "medium": 0.5,
             "low": 0.3
         }
-        
+
+    def initialize(self):
+        """
+        AIモデルマネージャーの初期化処理
+        - モデルのロード
+        - 設定の読み込み
+        - リソースの準備
+        """
+        try:
+            # OpenAI APIキーの設定
+            self.api_key = os.getenv("OPENAI_API_KEY")
+            if not self.api_key:
+                logger.warning("OpenAI APIキーが設定されていません")
+                return None
+            openai.api_key = self.api_key
+            logger.info("OpenAI APIキーを設定しました")
+
+            # モデルの初期化
+            model_name = "rinna/japanese-gpt-neox-3.6b"
+            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.float32
+            )
+            
+            # GPUが利用可能な場合はGPUに移動
+            if torch.cuda.is_available():
+                self.model = self.model.to("cuda")
+                logger.info("モデルをGPUに移動しました")
+            else:
+                logger.info("GPUが利用できないため、CPUで実行します")
+
+            logger.info("AIモデルの初期化が完了しました")
+            return True
+
+        except Exception as e:
+            logger.error(f"AIモデルの初期化中にエラーが発生しました: {str(e)}")
+            return False
+
     async def generate_chat_response(
         self,
         messages: List[Dict[str, str]],
@@ -178,73 +220,81 @@ class AIModelManager:
             生成された応答テキスト
         """
         try:
-            if not self.api_key:
-                logger.warning("OpenAI APIキーが設定されていません")
-                return self._generate_fallback_response(messages[-1]["content"])
+            # 最後のメッセージを取得
+            last_message = messages[-1]["content"] if messages else ""
 
-            # OpenAIのチャットAPIを呼び出し
-            response = await openai.ChatCompletion.acreate(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "あなたは親切で知識豊富なAIアシスタントです。"},
-                    *messages
-                ],
-                max_tokens=max_tokens,
-                temperature=temperature,
-                top_p=0.9,
-                frequency_penalty=0.0,
-                presence_penalty=0.6
-            )
+            # 基本的な応答パターンをチェック
+            if "こんにちは" in last_message:
+                return "こんにちは！何かお手伝いできることはありますか？"
+            elif THANK_YOU in last_message:
+                return "どういたしまして！他に何かお手伝いできることはありますか？"
+            elif "さようなら" in last_message or "バイバイ" in last_message:
+                return "さようなら！また会いましょう！"
+            elif "?" in last_message or "？" in last_message:
+                return "ご質問ありがとうございます。具体的にどのようなことでしょうか？"
 
-            return response.choices[0].message.content
+            # OpenAI APIを使用した応答生成を試みる
+            if self.api_key:
+                try:
+                    response = await openai.ChatCompletion.acreate(
+                        model="gpt-3.5-turbo",
+                        messages=[
+                            {"role": "system", "content": "あなたは親切で知識豊富なAIアシスタントです。"},
+                            *messages
+                        ],
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                        top_p=0.9,
+                        frequency_penalty=0.0,
+                        presence_penalty=0.6
+                    )
+                    if response and response.choices:
+                        return response.choices[0].message.content
+                except Exception as api_error:
+                    logger.error(f"OpenAI API呼び出し中にエラーが発生しました: {str(api_error)}")
+
+            # フォールバック応答を生成
+            return self._generate_default_response(last_message)
 
         except Exception as e:
-            logger.error(f"ChatGPT APIの呼び出し中にエラーが発生しました: {str(e)}")
-            return self._generate_fallback_response(messages[-1]["content"])
+            logger.error(f"応答生成中にエラーが発生しました: {str(e)}")
+            return "申し訳ありません。お手伝いできることはありますか？"
 
-    def _generate_fallback_response(self, user_message: str) -> str:
+    def _generate_default_response(self, message: str) -> str:
         """
-        APIが利用できない場合のフォールバック応答を生成
+        デフォルトの応答を生成する
 
         Args:
-            user_message: ユーザーの最後のメッセージ
+            message: ユーザーのメッセージ
 
         Returns:
-            フォールバック応答テキスト
+            str: 生成された応答
         """
-        # 基本的な応答ルール
-        user_message = user_message.lower()
-        
-        if "こんにちは" in user_message:
-            return "こんにちは！何かお手伝いできることはありますか？"
-        elif "ありがとう" in user_message:
-            return "どういたしまして！他に何かお手伝いできることはありますか？"
-        elif "さようなら" in user_message or "バイバイ" in user_message:
-            return "さようなら！また会いましょう！"
-        elif "天気" in user_message:
-            return "申し訳ありません。現在の天気情報は提供できません。"
-        elif "名前" in user_message:
-            return "私はAIアシスタントです。お手伝いさせていただきます。"
-        elif "元気" in user_message:
-            return "はい、元気です！あなたはいかがですか？"
-        elif "?" in user_message or "？" in user_message:
-            return "良い質問ですね。もう少し具体的に教えていただけますか？"
-        else:
-            return "承知しました。他に何かお手伝いできることはありますか？"
+        # メッセージの内容に基づいて適切な応答を選択
+        if not message:
+            return "何かお手伝いできることはありますか？"
 
-    def transcribe_audio(self, audio_data: bytes) -> str:
+        responses = [
+            "ご質問ありがとうございます。もう少し詳しく教えていただけますか？",
+            "承知いたしました。具体的にどのようなことでしょうか？",
+            "ご要望を伺わせていただきます。詳しくお聞かせください。",
+            "お手伝いさせていただきます。どのようなことでしょうか？",
+            "ご質問の内容について、もう少し詳しくお聞かせいただけますでしょうか？"
+        ]
+        
+        rng = default_rng(seed=42)
+        return rng.choice(responses)
+
+    def transcribe_audio(self) -> str:
         """
         音声をテキストに変換する（将来の実装のためのプレースホルダー）
         """
         return "音声認識はまだ実装されていません。"
 
-    def analyze_sentiment(self, text: str) -> Dict[str, Any]:
+    def analyze_sentiment(self) -> Dict[str, Any]:
         """
         テキストの感情分析を行う
         
-        Args:
-            text: 分析対象のテキスト
-            
         Returns:
             Dict: 感情分析結果
         """
@@ -368,69 +418,51 @@ class AIModelManager:
         return intensity
     
     def _optimize_response(self, response: str, messages: List[Dict[str, str]], sentiment: Dict) -> str:
-        """
-        応答を最適化する（改善版）
-        
-        Args:
-            response: 生成された応答
-            messages: メッセージのリスト
-            sentiment: 感情分析の結果
-            
-        Returns:
-            str: 最適化された応答
-        """
-        # 感情に基づく応答の調整（改善版）
+        response = self._adjust_for_emotion(response, sentiment)
+        response = self._adjust_for_intent(response, messages, sentiment)
+        response = self._adjust_for_urgency(response, sentiment)
+        response = self._adjust_for_time_of_day(response)
+        response = self._adjust_for_context(response, messages)
+        return response
+
+    def _adjust_for_emotion(self, response: str, sentiment: Dict) -> str:
         if sentiment["basic_sentiment"]["label"] == "ネガティブ" and sentiment["basic_sentiment"]["score"] > self.sentiment_thresholds["high"]:
             return "申し訳ありません。より良いサービスを提供できるよう努めます。具体的にどのような点でお困りでしょうか？"
-        
-        # 最近の会話履歴から意図を推測（改善版）
+        return response
+
+    def _adjust_for_intent(self, response: str, messages: List[Dict[str, str]], sentiment: Dict) -> str:
         intent = self._detect_intent(messages[-1]["content"])
-        
-        # 質問タイプに基づく応答の調整
-        if sentiment["question_type"] != "general":
-            if sentiment["question_type"] == "how_to":
-                response = "手順について説明させていただきます。" + response
-            elif sentiment["question_type"] == "why":
-                response = "理由について説明させていただきます。" + response
-            elif sentiment["question_type"] == "when":
-                response = "時間について説明させていただきます。" + response
-            elif sentiment["question_type"] == "who":
-                response = "担当者について説明させていただきます。" + response
-            elif sentiment["question_type"] == "where":
-                response = "場所について説明させていただきます。" + response
-        
-        # 緊急度に基づく応答の調整
-        if sentiment["urgency_level"] == "high":
-            response = "緊急のご用件と承知いたしました。" + response
-        elif sentiment["urgency_level"] == "medium":
-            response = "お急ぎのご用件と承知いたしました。" + response
-        
-        # 意図に基づくテンプレートの適用（改善版）
         if intent in self.response_templates:
             templates = self.response_templates[intent]
-            # 感情に基づいてテンプレートを選択
             if sentiment["basic_sentiment"]["label"] == "ポジティブ":
-                response = templates[0]  # より親しみやすい応答
+                return templates[0]
             elif sentiment["basic_sentiment"]["label"] == "ネガティブ":
-                response = templates[-1]  # より丁寧な応答
+                return templates[-1]
             else:
-                response = np.random.choice(templates)
-        
-        # 時間帯に基づく応答の調整（改善版）
+                return np.random.choice(templates)
+        return response
+
+    def _adjust_for_urgency(self, response: str, sentiment: Dict) -> str:
+        if sentiment["urgency_level"] == "high":
+            return "緊急のご用件と承知いたしました。" + response
+        elif sentiment["urgency_level"] == "medium":
+            return "お急ぎのご用件と承知いたしました。" + response
+        return response
+
+    def _adjust_for_time_of_day(self, response: str) -> str:
         current_hour = datetime.now().hour
         if 5 <= current_hour < 12:
-            response = "おはようございます。" + response
+            return "おはようございます。" + response
         elif 12 <= current_hour < 18:
-            response = "こんにちは。" + response
+            return "こんにちは。" + response
         else:
-            response = "こんばんは。" + response
-        
-        # コンテキストに基づく応答の調整
+            return "こんばんは。" + response
+
+    def _adjust_for_context(self, response: str, messages: List[Dict[str, str]]) -> str:
         if len(messages) > 1:
             prev_message = messages[-2]["content"]
             if any(word in prev_message for word in ["もう一度", "繰り返し", "再度"]):
-                response = "先ほどの内容について、もう一度説明させていただきます。" + response
-        
+                return "先ほどの内容について、もう一度説明させていただきます。" + response
         return response
     
     def _detect_intent(self, text: str) -> str:
@@ -448,7 +480,7 @@ class AIModelManager:
             return "greeting"
         elif any(word in text for word in ["さようなら", "バイバイ", "またね", "お疲れ様", "ご苦労様"]):
             return "farewell"
-        elif any(word in text for word in ["ありがとう", "感謝", "サンキュー", "助かりました", "ありがとうございます"]):
+        elif any(word in text for word in [THANK_YOU, "感謝", "サンキュー", "助かりました", "ありがとうございます"]):
             return "thanks"
         elif any(word in text for word in ["エラー", "問題", "困った", "できない", "動かない"]):
             return "error"
@@ -482,7 +514,7 @@ class AIModelManager:
             score += length_score * 0.3
             
             # 感情の一貫性スコア
-            sentiment = self.analyze_sentiment(response)
+            sentiment = self.analyze_sentiment()
             if sentiment["basic_sentiment"]["label"] == "ポジティブ":
                 score += 0.2
             
