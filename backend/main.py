@@ -484,7 +484,7 @@ async def get_current_user(
             user = User(
                 username="admin",
                 email="admin@example.com",
-                hashed_password=get_password_hash("admin123"),
+                hashed_password=get_password_hash(os.environ["ADMIN_INITIAL_PASSWORD"]),
                 is_admin=True,
                 is_active=True
             )
@@ -709,7 +709,7 @@ async def create_admin(db: Session = Depends(get_db)):
         admin_user = User(
             username="admin",
             email="admin@example.com",
-            hashed_password=get_password_hash("admin123"),
+            hashed_password=get_password_hash(os.environ["ADMIN_INITIAL_PASSWORD"]),
             is_admin=True,
             is_active=True
         )
