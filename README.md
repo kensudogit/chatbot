@@ -66,7 +66,7 @@ pip install -r requirements.txt
 2. データベースとユーザーを作成
 ```sql
 CREATE DATABASE chatbot CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'chatbot_user'@'localhost' IDENTIFIED BY 'your_password';
+CREATE USER 'chatbot_user'@'localhost' IDENTIFIED BY '<your-password>';
 GRANT ALL PRIVILEGES ON chatbot.* TO 'chatbot_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
@@ -74,9 +74,9 @@ FLUSH PRIVILEGES;
 ### 3. 環境変数の設定
 `.env`ファイルを作成し、以下の内容を設定：
 ```env
-SECRET_KEY=your-secret-key
-JWT_SECRET_KEY=your-jwt-secret-key
-DATABASE_URL=mysql://chatbot_user:your_password@localhost/chatbot?charset=utf8mb4
+SECRET_KEY=<generate-a-strong-random-secret>
+JWT_SECRET_KEY=<generate-a-strong-random-secret>
+DATABASE_URL=mysql://chatbot_user:<your-password>@localhost/chatbot?charset=utf8mb4
 PORT=8000
 ```
 
@@ -167,3 +167,7 @@ python main.py
    - APIエンドポイントのパスが正しいことを確認
    - ネットワーク接続を確認
    - CORS設定を確認 
+
+### Security note
+
+`SECRET_KEY` is required at runtime. Do not commit real credentials or secrets; inject them through environment variables or your deployment platform's secret manager.
