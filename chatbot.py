@@ -46,10 +46,10 @@ app = Flask(__name__,
 print("Sentry initialization disabled for development")
 
 # アプリケーション設定
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key')
+app.config['SECRET_KEY'] = os.environ['SECRET_KEY']
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'mysql://chatbot_user:your_password@localhost/chatbot?charset=utf8mb4')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'jwt-secret-key')
+app.config['JWT_SECRET_KEY'] = os.environ['JWT_SECRET_KEY']
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
 
 # キャッシュ設定（一時的に無効化）
@@ -416,7 +416,7 @@ if __name__ == '__main__':
             with session_scope() as session:
                 admin = session.query(User).filter_by(username='admin').first()
                 if not admin:
-                    password_hash = bcrypt.hashpw('admin123'.encode('utf-8'), bcrypt.gensalt())
+                    password_hash = bcrypt.hashpw(os.environ['ADMIN_INITIAL_PASSWORD'].encode('utf-8'), bcrypt.gensalt())
                     admin = User(
                         username='admin',
                         email='admin@example.com',
