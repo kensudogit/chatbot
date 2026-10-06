@@ -1,11 +1,40 @@
-# チャットボットアプリケーション
+# Chatbot Platform — FastAPI / Authentication / Conversation History
 
-## 概要
-このプロジェクトは、FastAPIを使用したRESTful APIサーバーをベースとしたチャットボットアプリケーションです。
-- ユーザー認証
-- チャット機能
+> **AI Application Foundation** — FastAPIをベースに、認証、チャットAPI、会話履歴、ヘルスチェック、パフォーマンス監視をまとめたバックエンド基盤です。
+>
+> **Stack:** Python 3.11 · FastAPI · MySQL · JWT · REST API
+
+## Portfolio Position
+
+このリポジトリは、LLMそのものよりも **AIチャットサービスを運用するためのアプリケーション基盤** に焦点を置いています。認証・履歴・API・監視を分離して実装し、より高度なAI Agent / RAGシステムへ発展させるための基礎構成を示します。
+
+## Architecture
+
+```text
+Client
+  │
+  ├── Authentication
+  │      └── JWT / session management
+  │
+  └── Chat REST API
+         ├── conversation processing
+         ├── history management
+         └── monitoring / health
+                    │
+                    ▼
+                  MySQL
+```
+
+## 主な機能
+
+- ユーザー登録・ログイン・ログアウト
+- JWT Bearer認証
+- チャットメッセージAPI
 - 会話履歴管理
+- 管理者アカウント管理
+- ヘルスチェック
 - パフォーマンスモニタリング
+- APIエラーハンドリング
 
 ## 必要条件
 - Python 3.11以上
