@@ -76,6 +76,7 @@ FLUSH PRIVILEGES;
 ```env
 SECRET_KEY=<generate-a-strong-random-secret>
 JWT_SECRET_KEY=<generate-a-strong-random-secret>
+ADMIN_INITIAL_PASSWORD=<set-a-strong-initial-admin-password>
 DATABASE_URL=mysql://chatbot_user:<your-password>@localhost/chatbot?charset=utf8mb4
 PORT=8000
 ```
@@ -94,7 +95,7 @@ python main.py
 
 ## デフォルト管理者アカウント
 - ユーザー名: admin
-- パスワード: admin123
+- パスワード: <set-via-ADMIN_INITIAL_PASSWORD>
 - メールアドレス: admin@example.com
 
 ## APIエンドポイント
